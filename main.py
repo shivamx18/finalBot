@@ -1407,46 +1407,125 @@ async def post_potds():
                 )
                 await channel.send(content=f"{role.mention}", embed=embed)
 
-def generate_cf_heatmap(solved_dates, cfid):
-    """Generate heatmap image and return BytesIO"""
+# def generate_cf_heatmap(solved_dates, cfid):
+#     """Generate heatmap image and return BytesIO"""
+#     today = datetime.date.today()
+#     start_date = today - datetime.timedelta(days=365)
+#     dates = list(solved_dates.keys())
+
+#     heatmap_data = defaultdict(int)
+#     for dt in dates:
+#         if dt >= start_date:
+#             heatmap_data[dt] += solved_dates[dt]
+
+#     days = (today - start_date).days + 1
+#     counts = [heatmap_data.get(start_date + datetime.timedelta(days=i), 0) for i in range(days)]
+
+#     weeks = (days + start_date.weekday()) // 7 + 1
+#     mat = np.zeros((7, weeks))
+
+#     for i, count in enumerate(counts):
+#         date = start_date + datetime.timedelta(days=i)
+#         week = (i + start_date.weekday()) // 7
+#         weekday = date.weekday()
+#         mat[weekday][week] = count
+
+#     fig, ax = plt.subplots(figsize=(14, 3))
+#     cmap = plt.cm.Reds
+#     im = ax.imshow(mat, cmap=cmap, aspect='auto', interpolation='nearest')
+
+#     # Customize
+#     ax.set_xticks([])
+#     ax.set_yticks(range(7))
+#     ax.set_yticklabels(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
+#     ax.set_title(f"📅 CF Solve Heatmap for {cfid}")
+
+#     # Color bar
+#     cbar = plt.colorbar(im, ax=ax, orientation="vertical")
+#     cbar.set_label("Solved Count")
+
+#     plt.tight_layout()
+#     buf = BytesIO()
+#     plt.savefig(buf, format='png')
+#     buf.seek(0)
+#     plt.close()
+#     return buf
+
+# @tree.command(name="cfheatmap", description="View your Codeforces AC heatmap (like GitHub)")
+# async def cfheatmap(interaction: discord.Interaction):
+#     user = users_collection.find_one({"discord_id": str(interaction.user.id)})
+#     if not user or "cfid" not in user:
+#         return await interaction.response.send_message("❌ You must be verified first.")
+
+#     cfid = user["cfid"]
+#     await interaction.response.defer()
+
+#     solved_dates = await fetch_ac_submissions(cfid)
+#     if solved_dates is None:
+#         return await interaction.followup.send("⚠️ Failed to fetch submissions.")
+
+#     buf = generate_cf_heatmap(solved_dates, cfid)
+#     total_ac = sum(solved_dates.values())
+
+#     # Streak Calculation
+#     streak, max_streak = 0, 0
+#     today = datetime.date.today()
+#     for i in range(365):
+#         date = today - datetime.timedelta(days=i)
+#         if solved_dates.get(date):
+#             streak += 1
+#             max_streak = max(max_streak, streak)
+#         else:
+#             streak = 0
+
+#     embed = discord.Embed(
+#         title=f"{cfid}'s Heatmap",
+#         description=f"✅ Total Solved: `{total_ac}`\n🔥 Best Streak: `{max_streak}` days",
+#         color=discord.Color.red()
+#     )
+#     file = discord.File(buf, filename="heatmap.png")
+#     embed.set_image(url="attachment://heatmap.png")
+
+#     await interaction.followup.send(embed=embed, file=file)
+
+import seaborn as sns
+import pandas as pd
+
+def generate_cf_heatmap(solved_dates: Dict[datetime.date, int], cfid: str):
     today = datetime.date.today()
-    start_date = today - datetime.timedelta(days=365)
-    dates = list(solved_dates.keys())
+    start_date = today - datetime.timedelta(days=364)
 
-    heatmap_data = defaultdict(int)
-    for dt in dates:
-        if dt >= start_date:
-            heatmap_data[dt] += solved_dates[dt]
+    # Prepare full 365-day date range
+    full_dates = pd.date_range(start=start_date, end=today)
+    df = pd.DataFrame({'date': full_dates})
+    df['count'] = df['date'].dt.date.map(solved_dates).fillna(0).astype(int)
+    df['dow'] = df['date'].dt.dayofweek  # 0 = Mon
+    df['week'] = ((df['date'] - pd.to_datetime(start_date)).dt.days + start_date.weekday()) // 7
 
-    days = (today - start_date).days + 1
-    counts = [heatmap_data.get(start_date + datetime.timedelta(days=i), 0) for i in range(days)]
+    # Pivot for heatmap: rows = dow, columns = week
+    heatmap_data = df.pivot(index='dow', columns='week', values='count')
+    heatmap_data.index = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
-    weeks = (days + start_date.weekday()) // 7 + 1
-    mat = np.zeros((7, weeks))
+    # Plotting
+    fig, ax = plt.subplots(figsize=(18, 3))
+    sns.heatmap(
+        heatmap_data,
+        cmap=sns.light_palette("red", as_cmap=True),
+        linewidths=0.5,
+        linecolor="white",
+        cbar_kws={"label": "Solved Count"},
+        square=False,
+        ax=ax
+    )
 
-    for i, count in enumerate(counts):
-        date = start_date + datetime.timedelta(days=i)
-        week = (i + start_date.weekday()) // 7
-        weekday = date.weekday()
-        mat[weekday][week] = count
-
-    fig, ax = plt.subplots(figsize=(14, 3))
-    cmap = plt.cm.Reds
-    im = ax.imshow(mat, cmap=cmap, aspect='auto', interpolation='nearest')
-
-    # Customize
-    ax.set_xticks([])
-    ax.set_yticks(range(7))
-    ax.set_yticklabels(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
-    ax.set_title(f"📅 CF Solve Heatmap for {cfid}")
-
-    # Color bar
-    cbar = plt.colorbar(im, ax=ax, orientation="vertical")
-    cbar.set_label("Solved Count")
+    ax.set_title(f"{cfid}'s Heatmap ({start_date.year}-{today.year})", fontsize=14)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.tick_params(left=True, bottom=False)
 
     plt.tight_layout()
     buf = BytesIO()
-    plt.savefig(buf, format='png')
+    plt.savefig(buf, format="png", bbox_inches='tight')
     buf.seek(0)
     plt.close()
     return buf
@@ -1467,20 +1546,25 @@ async def cfheatmap(interaction: discord.Interaction):
     buf = generate_cf_heatmap(solved_dates, cfid)
     total_ac = sum(solved_dates.values())
 
-    # Streak Calculation
-    streak, max_streak = 0, 0
+    # Calculate current and max streak
+    dates = sorted(solved_dates.keys())
     today = datetime.date.today()
-    for i in range(365):
+    current_streak, max_streak, streak = 0, 0, 0
+
+    for i in range(364, -1, -1):
         date = today - datetime.timedelta(days=i)
-        if solved_dates.get(date):
+        if solved_dates.get(date, 0):
             streak += 1
-            max_streak = max(max_streak, streak)
+            if i == 0: current_streak = streak
         else:
+            max_streak = max(max_streak, streak)
             streak = 0
 
+    max_streak = max(max_streak, streak)
+
     embed = discord.Embed(
-        title=f"{cfid}'s Heatmap",
-        description=f"✅ Total Solved: `{total_ac}`\n🔥 Best Streak: `{max_streak}` days",
+        title=f"{cfid}'s Solve Heatmap",
+        description=f"🧩 Total Solved: `{total_ac}`\n🔥 Max Streak: `{max_streak}` days",
         color=discord.Color.red()
     )
     file = discord.File(buf, filename="heatmap.png")
