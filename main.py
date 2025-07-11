@@ -554,7 +554,7 @@ async def setpotd2week(interaction: discord.Interaction,
 #     # Confirmation in original interaction
 #     await interaction.followup.send("🔐 A private verification thread has been created for you.", ephemeral=True)
 
-@tree.command(name="verify", description="Verify your Codeforces handle")
+@tree.command(name="verify", description="Verify or re-verify your Codeforces handle")
 @app_commands.describe(cfid="Your Codeforces handle")
 async def verify(interaction: discord.Interaction, cfid: str):
     if not await check_and_warn(interaction):
@@ -563,13 +563,11 @@ async def verify(interaction: discord.Interaction, cfid: str):
     await interaction.response.defer(ephemeral=True)
     verification_code = str(random.randint(1000, 9999))
 
-    # Create private thread
     thread = await interaction.channel.create_thread(
         name=f"verify-{interaction.user.name}",
         type=discord.ChannelType.private_thread
     )
 
-    # Verification button
     class ConfirmView(discord.ui.View):
         @discord.ui.button(label="✅ Verify", style=discord.ButtonStyle.success)
         async def confirm(self, button_interaction: discord.Interaction, _):
@@ -579,6 +577,7 @@ async def verify(interaction: discord.Interaction, cfid: str):
                     ephemeral=True
                 )
 
+            # Fetch user data
             async with aiohttp.ClientSession() as session:
                 async with session.get(f"https://codeforces.com/api/user.info?handles={cfid}") as resp:
                     data = await resp.json()
@@ -593,15 +592,24 @@ async def verify(interaction: discord.Interaction, cfid: str):
                     ephemeral=True
                 )
 
-            rank = user_data.get("rank", "unrated").title()
-            rating = user_data.get("rating", 0)
-
+            # Extract new info
+            new_rank = user_data.get("rank", "unrated").title()
+            new_rating = user_data.get("rating", 0)
             guild = interaction.guild
-            role = discord.utils.get(guild.roles, name=rank)
+
+            # Remove old rank role
+            existing = users_collection.find_one({"discord_id": str(interaction.user.id)})
+            if existing and "rank" in existing:
+                old_role = discord.utils.get(guild.roles, name=existing["rank"].title())
+                if old_role and old_role in interaction.user.roles:
+                    await interaction.user.remove_roles(old_role)
+
+            # Get or create new role
+            role = discord.utils.get(guild.roles, name=new_rank)
             if not role:
                 role = await guild.create_role(
-                    name=rank,
-                    colour=discord.Colour(role_colors.get(rank.lower(), 0xCCCCCC))
+                    name=new_rank,
+                    colour=discord.Colour(role_colors.get(new_rank.lower(), 0xCCCCCC))
                 )
 
             await interaction.user.add_roles(role)
@@ -610,27 +618,27 @@ async def verify(interaction: discord.Interaction, cfid: str):
                 {"discord_id": str(interaction.user.id)},
                 {"$set": {
                     "cfid": cfid,
-                    "rank": rank.lower(),
-                    "rating": rating,
+                    "rank": new_rank.lower(),
+                    "rating": new_rating,
                     "guild_id": interaction.guild_id
                 }},
                 upsert=True
             )
 
-            await thread.send(f"✅ Verified as `{cfid}` with role **{rank}**! 🎉")
+            await thread.send(f"✅ Verified as `{cfid}` with role **{new_rank}**! 🎉")
             await thread.delete()
 
-    # Send instructions
     await thread.send(
         f"{interaction.user.mention}, to verify:\n"
         f"1. Go to your [Codeforces settings](https://codeforces.com/settings)\n"
-        f"2. Temporarily change your **first name** to: `{verification_code}`\n"
-        f"3. Then click the ✅ button below to confirm.\n\n"
+        f"2. Temporarily change your **first name** to: ```{verification_code}```\n"
+        f"3. Then click the ✅Verify button below to confirm.\n\n"
         f"🔒 This ensures that only the real owner of the Codeforces account can verify.",
         view=ConfirmView()
     )
 
     await interaction.followup.send("🔐 A private verification thread has been created for you.", ephemeral=True)
+
 
 
 #view-potd
