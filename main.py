@@ -361,13 +361,19 @@ async def thank(interaction: discord.Interaction, user: discord.User, reason: st
 
 
 # ✅ Error handler at the bottom
+# ------------------ Global Error Handler for App Commands ------------------
 @tree.error
 async def on_app_command_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("❌ This command is for **admins only**.", ephemeral=True)
-    else:
-        await interaction.response.send_message(f"⚠️ Unexpected error: `{error}`", ephemeral=True)
-
+    try:
+        if interaction.response.is_done():
+            # Already responded, use followup
+            await interaction.followup.send("⚠️ Unexpected error occurred while handling the command.", ephemeral=True)
+        elif isinstance(error, app_commands.MissingPermissions):
+            await interaction.response.send_message("❌ This command is for **admins only**.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"⚠️ Unexpected error: `{error}`", ephemeral=True)
+    except Exception as e:
+        print(f"Error in error handler: {e}")
 
 #POTD-1
 # Temp: You can place this near the top
