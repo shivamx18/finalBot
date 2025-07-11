@@ -478,81 +478,160 @@ async def setpotd2week(interaction: discord.Interaction,
 
 
 # ------------------ Slash Command: /verify ------------------
+# @tree.command(name="verify", description="Verify your Codeforces handle")
+# @app_commands.describe(cfid="Your Codeforces handle")
+# async def verify(interaction: discord.Interaction, cfid: str):
+#     """Creates a thread, verifies the user via CF API, and assigns rank role"""
+
+#     if not await check_and_warn(interaction):
+#         return
+
+#     # Defer the response early to avoid 3-second timeout
+#     await interaction.response.defer(ephemeral=True)
+
+#     verification_code = str(random.randint(1000, 9999))
+
+#     # Create a private thread
+#     thread = await interaction.channel.create_thread(
+#         name=f"verify-{interaction.user.name}",
+#         type=discord.ChannelType.private_thread
+#     )
+
+#     # Button view for confirmation
+#     class ConfirmView(discord.ui.View):
+#         @discord.ui.button(label="✅ Verify", style=discord.ButtonStyle.success)
+#         async def confirm(self, button_interaction: discord.Interaction, _):
+#             if button_interaction.user.id != interaction.user.id:
+#                 await button_interaction.response.send_message(
+#                     "❌ Only the user who initiated verification can confirm.",
+#                     ephemeral=True
+#                 )
+#                 return
+
+#             try:
+#                 rank, rating = await get_user_rating_and_rank(cfid)
+#             except Exception:
+#                 await button_interaction.response.send_message("❌ Invalid Codeforces handle.", ephemeral=True)
+#                 return
+
+#             # Create or find role based on CF rank
+#             role_name = rank.title()
+#             guild = interaction.guild
+#             role = discord.utils.get(guild.roles, name=role_name)
+#             if not role:
+#                 role = await guild.create_role(
+#                     name=role_name,
+#                     colour=discord.Colour(role_colors.get(rank, 0xCCCCCC))
+#                 )
+
+#             # Add role to user
+#             await interaction.user.add_roles(role)
+
+#             # Save to MongoDB
+#             users_collection.update_one(
+#                 {"discord_id": str(interaction.user.id)},
+#                 {"$set": {
+#                     "cfid": cfid,
+#                     "rank": rank,
+#                     "rating": rating,
+#                     "guild_id": interaction.guild_id
+#                 }},
+#                 upsert=True
+#             )
+
+#             await thread.send(f"✅ Verified as `{cfid}` with role **{role_name}**! 🎉")
+#             await thread.delete()
+
+#     # Instruction message inside thread
+#     await thread.send(
+#         f"{interaction.user.mention}, to verify:\n"
+#         f"1. Go to your [Codeforces settings](https://codeforces.com/settings)\n"
+#         f"2. Temporarily change your **first name** to: `{verification_code}`\n"
+#         f"3. Then click the ✅ button below to confirm.",
+#         view=ConfirmView()
+#     )
+
+#     # Confirmation in original interaction
+#     await interaction.followup.send("🔐 A private verification thread has been created for you.", ephemeral=True)
+
 @tree.command(name="verify", description="Verify your Codeforces handle")
 @app_commands.describe(cfid="Your Codeforces handle")
 async def verify(interaction: discord.Interaction, cfid: str):
-    """Creates a thread, verifies the user via CF API, and assigns rank role"""
-
     if not await check_and_warn(interaction):
         return
 
-    # Defer the response early to avoid 3-second timeout
     await interaction.response.defer(ephemeral=True)
-
     verification_code = str(random.randint(1000, 9999))
 
-    # Create a private thread
+    # Create private thread
     thread = await interaction.channel.create_thread(
         name=f"verify-{interaction.user.name}",
         type=discord.ChannelType.private_thread
     )
 
-    # Button view for confirmation
+    # Verification button
     class ConfirmView(discord.ui.View):
         @discord.ui.button(label="✅ Verify", style=discord.ButtonStyle.success)
         async def confirm(self, button_interaction: discord.Interaction, _):
             if button_interaction.user.id != interaction.user.id:
-                await button_interaction.response.send_message(
+                return await button_interaction.response.send_message(
                     "❌ Only the user who initiated verification can confirm.",
                     ephemeral=True
                 )
-                return
 
-            try:
-                rank, rating = await get_user_rating_and_rank(cfid)
-            except Exception:
-                await button_interaction.response.send_message("❌ Invalid Codeforces handle.", ephemeral=True)
-                return
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"https://codeforces.com/api/user.info?handles={cfid}") as resp:
+                    data = await resp.json()
 
-            # Create or find role based on CF rank
-            role_name = rank.title()
-            guild = interaction.guild
-            role = discord.utils.get(guild.roles, name=role_name)
-            if not role:
-                role = await guild.create_role(
-                    name=role_name,
-                    colour=discord.Colour(role_colors.get(rank, 0xCCCCCC))
+            if data["status"] != "OK":
+                return await button_interaction.response.send_message("❌ Invalid Codeforces handle.", ephemeral=True)
+
+            user_data = data["result"][0]
+            if user_data.get("firstName") != verification_code:
+                return await button_interaction.response.send_message(
+                    "❌ Verification failed. Make sure you've set your **First Name** on Codeforces to the code provided.",
+                    ephemeral=True
                 )
 
-            # Add role to user
+            rank = user_data.get("rank", "unrated").title()
+            rating = user_data.get("rating", 0)
+
+            guild = interaction.guild
+            role = discord.utils.get(guild.roles, name=rank)
+            if not role:
+                role = await guild.create_role(
+                    name=rank,
+                    colour=discord.Colour(role_colors.get(rank.lower(), 0xCCCCCC))
+                )
+
             await interaction.user.add_roles(role)
 
-            # Save to MongoDB
             users_collection.update_one(
                 {"discord_id": str(interaction.user.id)},
                 {"$set": {
                     "cfid": cfid,
-                    "rank": rank,
+                    "rank": rank.lower(),
                     "rating": rating,
                     "guild_id": interaction.guild_id
                 }},
                 upsert=True
             )
 
-            await thread.send(f"✅ Verified as `{cfid}` with role **{role_name}**! 🎉")
+            await thread.send(f"✅ Verified as `{cfid}` with role **{rank}**! 🎉")
             await thread.delete()
 
-    # Instruction message inside thread
+    # Send instructions
     await thread.send(
         f"{interaction.user.mention}, to verify:\n"
         f"1. Go to your [Codeforces settings](https://codeforces.com/settings)\n"
         f"2. Temporarily change your **first name** to: `{verification_code}`\n"
-        f"3. Then click the ✅ button below to confirm.",
+        f"3. Then click the ✅ button below to confirm.\n\n"
+        f"🔒 This ensures that only the real owner of the Codeforces account can verify.",
         view=ConfirmView()
     )
 
-    # Confirmation in original interaction
     await interaction.followup.send("🔐 A private verification thread has been created for you.", ephemeral=True)
+
 
 #view-potd
 # ------------------ /viewpotd1 ------------------
