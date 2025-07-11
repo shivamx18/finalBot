@@ -630,7 +630,7 @@ async def wait_for_ac(handle1, handle2, problem, timeout_minutes=20):
     """
     contest_id = problem['contestId']
     index = problem['index']
-    start_time = datetime.datetime.utcnow()
+    start_time = datetime.datetime.now(datetime.UTC)
     timeout = datetime.timedelta(minutes=timeout_minutes)
 
     async def check_solved(handle):
@@ -650,7 +650,7 @@ async def wait_for_ac(handle1, handle2, problem, timeout_minutes=20):
         return False
 
     # Poll every 30 seconds
-    while datetime.datetime.utcnow() - start_time < timeout:
+    while datetime.datetime.now(datetime.UTC) - start_time < timeout:
         if await check_solved(handle1):
             return handle1
         if await check_solved(handle2):
@@ -711,7 +711,7 @@ def record_duel_result(winner_cfid, loser_cfid):
     users_collection.update_one({"cfid": loser_cfid}, {"$inc": {"duel_points": -1}})
 
     # Log history
-    timestamp = int(datetime.datetime.utcnow().timestamp())
+    timestamp = int(datetime.datetime.now(datetime.UTC).timestamp())
     for cfid, won in [(winner_cfid, True), (loser_cfid, False)]:
         users_collection.update_one(
             {"cfid": cfid},
@@ -853,7 +853,10 @@ async def duel(interaction: discord.Interaction, user: discord.User, min_rating:
                 loser = self.h2 if winner == self.h1 else self.h1
                 record_duel_result(winner, loser)
                 await self.thread.send(f"🏆 `{winner}` wins the duel!\n❌ `{loser}` loses.")
+                await asyncio.sleep(2)  # Optional: give time for message to show before deletion
+
             await self.thread.delete()
+
 
         @discord.ui.button(label="❌ Reject", style=discord.ButtonStyle.danger)
         async def reject(self, i: discord.Interaction, _):
@@ -904,7 +907,7 @@ def record_duel_result(winner_cfid, loser_cfid):
     users_collection.update_one({"cfid": winner_cfid}, {"$inc": {"duel_points": 1}})
     users_collection.update_one({"cfid": loser_cfid}, {"$inc": {"duel_points": -1}})
 
-    timestamp = int(datetime.datetime.utcnow().timestamp())
+    timestamp = int(datetime.datetime.now(datetime.UTC).timestamp())
     for cfid, won in [(winner_cfid, True), (loser_cfid, False)]:
         users_collection.update_one(
             {"cfid": cfid},
@@ -1183,7 +1186,7 @@ async def statscf(interaction: discord.Interaction, handle: str):
 
 @tasks.loop(minutes=30)
 async def check_contests():
-    now = datetime.datetime.utcnow().replace(tzinfo=pytz.utc)
+    now = datetime.datetime.now(datetime.UTC).replace(tzinfo=pytz.utc)
     upcoming = []
 
     async with aiohttp.ClientSession() as session:
@@ -1350,7 +1353,7 @@ async def suggestions(interaction: discord.Interaction, message: str):
         color=discord.Color.blurple()
     )
     embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-    embed.timestamp = datetime.datetime.utcnow()
+    embed.timestamp = datetime.datetime.now(datetime.UTC)
 
     await mod_channel.send(embed=embed)
     await interaction.response.send_message("✅ Your suggestion has been sent to the moderators!", ephemeral=True)
