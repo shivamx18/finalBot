@@ -105,6 +105,28 @@ async def fetch_ac_submissions(cfid):
     return solved_dates
 
 
+# ------------------ Slash Command: /setcelebrationchannel ------------------
+@tree.command(name="setcfcelebrationchannel", description="Set the channel to post CF rank-up celebrations")
+@app_commands.checks.has_permissions(administrator=True)
+async def set_celebration_channel(interaction: discord.Interaction):
+    guilds_collection.update_one(
+        {"guild_id": interaction.guild_id},
+        {"$set": {"cf_celebration_channel": interaction.channel_id}},
+        upsert=True
+    )
+    await interaction.response.send_message("🎉 Celebration channel has been set!", ephemeral=True)
+# @tree.command(name="setrankcelebrationchannel", description="Set the channel for rank-up celebration messages")
+# @app_commands.checks.has_permissions(administrator=True)
+# async def set_rank_celebration_channel(interaction: discord.Interaction):
+#     guilds_collection.update_one(
+#         {"guild_id": interaction.guild_id},
+#         {"$set": {"rank_celebration_channel": interaction.channel_id}},
+#         upsert=True
+#     )
+#     await interaction.response.send_message("✅ Celebration channel set!", ephemeral=True)
+
+
+
 # ------------------ Slash Command: /setcommandchannel ------------------
 @tree.command(name="setcommandchannel", description="Set the bot command channel (admin only)")
 @app_commands.checks.has_permissions(administrator=True)
@@ -331,6 +353,32 @@ async def clearduelleaderboard(interaction: discord.Interaction):
     )
 
 
+celebration_messages = [
+    "Another level unlocked! 🔓",
+    "This one’s built different 🔥",
+    "Grinding pays off! 🚀",
+    "Legends aren’t born—they’re coded. 💻",
+    "The climb continues ⛰️",
+    "Respect ++ 💯",
+    "Clapped the ladder 😤",
+    "On fire! 🔥🔥🔥"
+]
+
+def get_rank_emoji(rank):
+    return {
+        "newbie": "⚪",
+        "pupil": "🟢",
+        "specialist": "🔵",
+        "expert": "🟣",
+        "candidate master": "🟠",
+        "master": "🔴",
+        "international master": "🔴",
+        "grandmaster": "🏅",
+        "international grandmaster": "🥇",
+        "legendary grandmaster": "🔥"
+    }.get(rank.lower(), "🎖️")
+
+
 # ------------------ /enablereminder ------------------
 @tree.command(name="enablereminder", description="Admin only: Enable contest reminders for a platform")
 @app_commands.checks.has_permissions(administrator=True)
@@ -554,86 +602,107 @@ async def setpotd2week(interaction: discord.Interaction,
 #     # Confirmation in original interaction
 #     await interaction.followup.send("🔐 A private verification thread has been created for you.", ephemeral=True)
 
-@tree.command(name="verify", description="Verify or re-verify your Codeforces handle")
+#verify command
+@tree.command(name="verify", description="Verify your Codeforces handle")
 @app_commands.describe(cfid="Your Codeforces handle")
 async def verify(interaction: discord.Interaction, cfid: str):
-    if not await check_and_warn(interaction):
-        return
-
     await interaction.response.defer(ephemeral=True)
+
+    user_id = str(interaction.user.id)
     verification_code = str(random.randint(1000, 9999))
 
+    # Create private thread
     thread = await interaction.channel.create_thread(
         name=f"verify-{interaction.user.name}",
         type=discord.ChannelType.private_thread
     )
 
+    # View for Confirm Button
     class ConfirmView(discord.ui.View):
         @discord.ui.button(label="✅ Verify", style=discord.ButtonStyle.success)
         async def confirm(self, button_interaction: discord.Interaction, _):
             if button_interaction.user.id != interaction.user.id:
-                return await button_interaction.response.send_message(
-                    "❌ Only the user who initiated verification can confirm.",
+                await button_interaction.response.send_message(
+                    "❌ Only the user who started verification can confirm.",
                     ephemeral=True
                 )
+                return
 
-            # Fetch user data
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"https://codeforces.com/api/user.info?handles={cfid}") as resp:
-                    data = await resp.json()
+            # Fetch user details
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"https://codeforces.com/api/user.info?handles={cfid}") as resp:
+                        data = await resp.json()
+                        if data["status"] != "OK":
+                            raise ValueError("Invalid handle")
 
-            if data["status"] != "OK":
-                return await button_interaction.response.send_message("❌ Invalid Codeforces handle.", ephemeral=True)
+                        info = data["result"][0]
+                        if info.get("firstName", "") != verification_code:
+                            raise ValueError("Verification code mismatch")
 
-            user_data = data["result"][0]
-            if user_data.get("firstName") != verification_code:
-                return await button_interaction.response.send_message(
-                    "❌ Verification failed. Make sure you've set your **First Name** on Codeforces to the code provided.",
-                    ephemeral=True
-                )
+                        new_rank = info.get("rank", "unrated").lower()
+                        new_rating = info.get("rating", 0)
 
-            # Extract new info
-            new_rank = user_data.get("rank", "unrated").title()
-            new_rating = user_data.get("rating", 0)
-            guild = interaction.guild
+            except Exception:
+                await button_interaction.response.send_message("❌ Verification failed. Make sure first name matches the code.", ephemeral=True)
+                return
 
-            # Remove old rank role
-            existing = users_collection.find_one({"discord_id": str(interaction.user.id)})
-            if existing and "rank" in existing:
-                old_role = discord.utils.get(guild.roles, name=existing["rank"].title())
+            # Remove old rank roles
+            prev_user = users_collection.find_one({"discord_id": user_id})
+            if prev_user and "rank" in prev_user:
+                old_role = discord.utils.get(interaction.guild.roles, name=prev_user["rank"].title())
                 if old_role and old_role in interaction.user.roles:
                     await interaction.user.remove_roles(old_role)
 
-            # Get or create new role
-            role = discord.utils.get(guild.roles, name=new_rank)
+            # Assign new rank role
+            role_name = new_rank.title()
+            role_color = role_colors.get(new_rank, 0xCCCCCC)
+            role = discord.utils.get(interaction.guild.roles, name=role_name)
             if not role:
-                role = await guild.create_role(
-                    name=new_rank,
-                    colour=discord.Colour(role_colors.get(new_rank.lower(), 0xCCCCCC))
-                )
+                role = await interaction.guild.create_role(name=role_name, colour=discord.Colour(role_color))
 
             await interaction.user.add_roles(role)
 
+            # Check for Rank Celebration
+            old_rank = prev_user.get("rank") if prev_user else None
             users_collection.update_one(
-                {"discord_id": str(interaction.user.id)},
+                {"discord_id": user_id},
                 {"$set": {
                     "cfid": cfid,
-                    "rank": new_rank.lower(),
                     "rating": new_rating,
+                    "rank": new_rank,
                     "guild_id": interaction.guild_id
                 }},
                 upsert=True
             )
 
-            await thread.send(f"✅ Verified as `{cfid}` with role **{new_rank}**! 🎉")
+            # Celebration Message if ranked up
+            if old_rank and new_rank != old_rank:
+                guild_data = guilds_collection.find_one({"guild_id": interaction.guild_id})
+                celebration_channel_id = guild_data.get("rank_celebration_channel") if guild_data else None
+                if celebration_channel_id:
+                    channel = interaction.guild.get_channel(celebration_channel_id)
+                    if channel:
+                        messages = [
+                            "🔥 Crushing the ladder!",
+                            "🎯 Another level up!",
+                            "📈 You’re unstoppable!",
+                            "🏆 That’s how it’s done!",
+                            "🚀 Zooming through the ranks!"
+                        ]
+                        msg = random.choice(messages)
+                        await channel.send(
+                            f"🎉 **{interaction.user.mention}** just ranked up to **{role_name}** on Codeforces!\n{msg}"
+                        )
+
+            await thread.send(f"✅ Verified as `{cfid}` with role **{role_name}**! 🎉")
             await thread.delete()
 
     await thread.send(
         f"{interaction.user.mention}, to verify:\n"
         f"1. Go to your [Codeforces settings](https://codeforces.com/settings)\n"
-        f"2. Temporarily change your **first name** to: ```{verification_code}```\n"
-        f"3. Then click the ✅Verify button below to confirm.\n\n"
-        f"🔒 This ensures that only the real owner of the Codeforces account can verify.",
+        f"2. Temporarily change your **first name** to: `{verification_code}`\n"
+        f"3. Then click the ✅ button below to confirm.",
         view=ConfirmView()
     )
 
