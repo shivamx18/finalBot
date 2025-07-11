@@ -99,7 +99,8 @@ async def fetch_ac_submissions(cfid):
     solved_dates = defaultdict(int)
     for sub in data["result"]:
         if sub["verdict"] == "OK":
-            dt = datetime.datetime.utcfromtimestamp(sub["creationTimeSeconds"]).date()
+            # dt = datetime.datetime.utcfromtimestamp(sub["creationTimeSeconds"]).date()
+            dt = datetime.datetime.fromtimestamp(sub["creationTimeSeconds"], datetime.UTC).date()
             solved_dates[dt] += 1
     return solved_dates
 
