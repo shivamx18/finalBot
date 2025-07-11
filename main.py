@@ -159,7 +159,7 @@ def record_duel_result(winner_cfid, loser_cfid):
             {"$push": {
                 "duel_history": {
                     "timestamp": timestamp,
-                    "duel_points": 1 if won else -1
+                    "duel_points": 1 if won else 0
                 }
             }}
         )
