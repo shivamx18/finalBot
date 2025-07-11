@@ -586,6 +586,43 @@ async def edit_potd2(interaction: discord.Interaction, day: str, problem: str):
     )
     await interaction.response.send_message(f"✅ POTD2 updated for **{day.capitalize()}**!", ephemeral=True)
 
+#helper for unsolved problem
+async def get_unsolved_problem(min_rating, max_rating, handle1, handle2):
+    url = "https://codeforces.com/api/problemset.problems"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            data = await resp.json()
+            if data["status"] != "OK":
+                raise Exception("Failed to fetch problems")
+
+            problems = data["result"]["problems"]
+
+        # Fetch solved problems by both users
+        async def get_solved(handle):
+            async with session.get(f"https://codeforces.com/api/user.status?handle={handle}") as resp:
+                submissions = await resp.json()
+                return {
+                    f"{s['problem']['contestId']}-{s['problem']['index']}"
+                    for s in submissions.get("result", [])
+                    if s.get("verdict") == "OK"
+                }
+
+        solved1 = await get_solved(handle1)
+        solved2 = await get_solved(handle2)
+        combined_solved = solved1.union(solved2)
+
+        unsolved = [
+            p for p in problems
+            if "contestId" in p and "index" in p and "rating" in p
+            and min_rating <= p["rating"] <= max_rating
+            and f"{p['contestId']}-{p['index']}" not in combined_solved
+        ]
+
+        if not unsolved:
+            return None
+
+        return random.choice(unsolved)
+
 
 # ------------------ Slash Command: /cfid ------------------
 @tree.command(name="cfid", description="Get a user's Codeforces handle")
