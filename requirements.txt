@@ -1,6 +1,8 @@
-# py-cord==2.5.0
-# motor
-# python-dotenv
-# aiohttp
-discord.py==2.3.2
+motor
+discord.py>=2.3.2
+aiohttp
+pymongo
 python-dotenv
+matplotlib
+apscheduler
+pytz
