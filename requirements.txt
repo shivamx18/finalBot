@@ -1,0 +1,6 @@
+# py-cord==2.5.0
+# motor
+# python-dotenv
+# aiohttp
+discord.py==2.3.2
+python-dotenv
