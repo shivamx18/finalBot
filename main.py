@@ -701,7 +701,7 @@ async def verify(interaction: discord.Interaction, cfid: str):
     await thread.send(
         f"{interaction.user.mention}, to verify:\n"
         f"1. Go to your [Codeforces settings](https://codeforces.com/settings)\n"
-        f"2. Temporarily change your **first name** to: `{verification_code}`\n"
+        f"2. Temporarily change your **first name** to: ```{verification_code}```\n"
         f"3. Then click the ✅ button below to confirm.",
         view=ConfirmView()
     )
