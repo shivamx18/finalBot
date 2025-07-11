@@ -164,37 +164,6 @@ def record_duel_result(winner_cfid, loser_cfid):
             }}
         )
 
-# @tree.command(name="duel", description="Challenge someone to a Codeforces duel")
-# @app_commands.describe(user="Opponent", min_rating="Minimum rating", max_rating="Maximum rating")
-# async def duel(interaction: discord.Interaction, user: discord.User, min_rating: int, max_rating: int):
-#     guild_id = interaction.guild_id
-#     guild_config = guilds_collection.find_one({"guild_id": guild_id})
-#     duel_channel = guild_config.get("duel_channel") if guild_config else None
-
-#     if duel_channel and interaction.channel_id != duel_channel:
-#         return await interaction.response.send_message("❌ Use this in the designated duel channel.", ephemeral=True)
-
-#     id1, id2 = str(interaction.user.id), str(user.id)
-#     user1 = users_collection.find_one({"discord_id": id1})
-#     user2 = users_collection.find_one({"discord_id": id2})
-
-#     if not user1 or not user2:
-#         return await interaction.response.send_message("❌ Both users must be verified to duel.", ephemeral=True)
-
-#     h1, h2 = user1["cfid"], user2["cfid"]
-
-#     thread = await interaction.channel.create_thread(
-#         name=f"duel-{interaction.user.name}-vs-{user.name}",
-#         type=discord.ChannelType.private_thread
-#     )
-
-#     await thread.send(
-#         f"{user.mention}, do you accept the duel challenge from {interaction.user.mention}?",
-#         view=DuelConfirmView(user, thread, min_rating, max_rating, h1, h2)
-#     )
-
-#     await interaction.response.send_message("📨 Duel request sent!", ephemeral=True)
-
 
 # ------------------ Slash Command: /setmodchannel ------------------
 @tree.command(name="setmodchannel", description="Set the mod feedback channel (Admin only)")
@@ -334,6 +303,23 @@ async def get_random_problem(session, rating):
 @scheduler.scheduled_job("cron", day_of_week="mon", hour=0, minute=0, timezone="Asia/Kolkata")
 async def scheduled_solvehunt():
     await post_solvehunt_problems()
+
+@tree.command(name="clearduelleaderboard", description="(Admin only) Clear the entire duel leaderboard")
+@app_commands.checks.has_permissions(administrator=True)
+async def clearduelleaderboard(interaction: discord.Interaction):
+    result = users_collection.update_many(
+        {},  # applies to all users
+        {
+            "$unset": {
+                "duel_points": "",
+                "duel_history": ""
+            }
+        }
+    )
+    await interaction.response.send_message(
+        f"✅ Cleared duel leaderboard data for `{result.modified_count}` users.",
+        ephemeral=True
+    )
 
 
 # ------------------ /enablereminder ------------------
@@ -960,17 +946,26 @@ async def duel(interaction: discord.Interaction, user: discord.User, min_rating:
 
 
 # ------------------ Duel Leaderboard ------------------
-@tree.command(name="duelleaderboard", description="🏆 See top Codeforces duel performers")
+# @tree.command(name="duelleaderboard", description="🏆 See top Codeforces duel performers")
+# async def duelleaderboard(interaction: discord.Interaction):
+#     users = users_collection.find().sort("duel_points", -1).limit(10)
+#     leaderboard = "🏆 **Top Duel Performers** 🏆\n\n"
+
+#     for i, user in enumerate(users, start=1):
+#         cfid = user.get("cfid", "Unknown")
+#         points = user.get("duel_points", 0)
+#         leaderboard += f"**{i}.** `{cfid}` — {points} points\n"
+
+#     await interaction.response.send_message(leaderboard)
+
+@tree.command(name="duelleaderboard", description="📈See top duel performers")
 async def duelleaderboard(interaction: discord.Interaction):
-    users = users_collection.find().sort("duel_points", -1).limit(10)
-    leaderboard = "🏆 **Top Duel Performers** 🏆\n\n"
+    users = users_collection.find({"duel_points": {"$exists": True}}).sort("duel_points", -1).limit(10)
+    msg = "🏆 **Top Duel Performers** 🏆\n"
+    for i, user in enumerate(users, 1):
+        msg += f"**{i}.** `{user['cfid']}` → {user.get('duel_points', 0)} points\n"
+    await interaction.response.send_message(msg)
 
-    for i, user in enumerate(users, start=1):
-        cfid = user.get("cfid", "Unknown")
-        points = user.get("duel_points", 0)
-        leaderboard += f"**{i}.** `{cfid}` — {points} points\n"
-
-    await interaction.response.send_message(leaderboard)
 
 
 # ------------------ My Duel Points ------------------
