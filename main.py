@@ -164,36 +164,36 @@ def record_duel_result(winner_cfid, loser_cfid):
             }}
         )
 
-@tree.command(name="duel", description="Challenge someone to a Codeforces duel")
-@app_commands.describe(user="Opponent", min_rating="Minimum rating", max_rating="Maximum rating")
-async def duel(interaction: discord.Interaction, user: discord.User, min_rating: int, max_rating: int):
-    guild_id = interaction.guild_id
-    guild_config = guilds_collection.find_one({"guild_id": guild_id})
-    duel_channel = guild_config.get("duel_channel") if guild_config else None
+# @tree.command(name="duel", description="Challenge someone to a Codeforces duel")
+# @app_commands.describe(user="Opponent", min_rating="Minimum rating", max_rating="Maximum rating")
+# async def duel(interaction: discord.Interaction, user: discord.User, min_rating: int, max_rating: int):
+#     guild_id = interaction.guild_id
+#     guild_config = guilds_collection.find_one({"guild_id": guild_id})
+#     duel_channel = guild_config.get("duel_channel") if guild_config else None
 
-    if duel_channel and interaction.channel_id != duel_channel:
-        return await interaction.response.send_message("❌ Use this in the designated duel channel.", ephemeral=True)
+#     if duel_channel and interaction.channel_id != duel_channel:
+#         return await interaction.response.send_message("❌ Use this in the designated duel channel.", ephemeral=True)
 
-    id1, id2 = str(interaction.user.id), str(user.id)
-    user1 = users_collection.find_one({"discord_id": id1})
-    user2 = users_collection.find_one({"discord_id": id2})
+#     id1, id2 = str(interaction.user.id), str(user.id)
+#     user1 = users_collection.find_one({"discord_id": id1})
+#     user2 = users_collection.find_one({"discord_id": id2})
 
-    if not user1 or not user2:
-        return await interaction.response.send_message("❌ Both users must be verified to duel.", ephemeral=True)
+#     if not user1 or not user2:
+#         return await interaction.response.send_message("❌ Both users must be verified to duel.", ephemeral=True)
 
-    h1, h2 = user1["cfid"], user2["cfid"]
+#     h1, h2 = user1["cfid"], user2["cfid"]
 
-    thread = await interaction.channel.create_thread(
-        name=f"duel-{interaction.user.name}-vs-{user.name}",
-        type=discord.ChannelType.private_thread
-    )
+#     thread = await interaction.channel.create_thread(
+#         name=f"duel-{interaction.user.name}-vs-{user.name}",
+#         type=discord.ChannelType.private_thread
+#     )
 
-    await thread.send(
-        f"{user.mention}, do you accept the duel challenge from {interaction.user.mention}?",
-        view=DuelConfirmView(user, thread, min_rating, max_rating, h1, h2)
-    )
+#     await thread.send(
+#         f"{user.mention}, do you accept the duel challenge from {interaction.user.mention}?",
+#         view=DuelConfirmView(user, thread, min_rating, max_rating, h1, h2)
+#     )
 
-    await interaction.response.send_message("📨 Duel request sent!", ephemeral=True)
+#     await interaction.response.send_message("📨 Duel request sent!", ephemeral=True)
 
 
 # ------------------ Slash Command: /setmodchannel ------------------
