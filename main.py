@@ -147,17 +147,54 @@ async def setreminderchannel(interaction: discord.Interaction,
     )
     await interaction.response.send_message("✅ Reminder settings updated!", ephemeral=True)
 
-# ------------------ Slash Command: /setduelchannel ------------------
-@tree.command(name="setduelchannel", description="Set the duel challenge channel (admin only)")
-@app_commands.checks.has_permissions(administrator=True)
-async def set_duel_channel(interaction: discord.Interaction):
-    """Stores the duel channel ID in MongoDB"""
-    guilds_collection.update_one(
-        {"guild_id": interaction.guild_id},
-        {"$set": {"duel_channel_id": interaction.channel_id}},
-        upsert=True
+
+def record_duel_result(winner_cfid, loser_cfid):
+    users_collection.update_one({"cfid": winner_cfid}, {"$inc": {"duel_points": 1}})
+    users_collection.update_one({"cfid": loser_cfid}, {"$inc": {"duel_points": -1}})
+
+    timestamp = int(datetime.datetime.now(datetime.UTC).timestamp())
+    for cfid, won in [(winner_cfid, True), (loser_cfid, False)]:
+        users_collection.update_one(
+            {"cfid": cfid},
+            {"$push": {
+                "duel_history": {
+                    "timestamp": timestamp,
+                    "duel_points": 1 if won else -1
+                }
+            }}
+        )
+
+@tree.command(name="duel", description="Challenge someone to a Codeforces duel")
+@app_commands.describe(user="Opponent", min_rating="Minimum rating", max_rating="Maximum rating")
+async def duel(interaction: discord.Interaction, user: discord.User, min_rating: int, max_rating: int):
+    guild_id = interaction.guild_id
+    guild_config = guilds_collection.find_one({"guild_id": guild_id})
+    duel_channel = guild_config.get("duel_channel") if guild_config else None
+
+    if duel_channel and interaction.channel_id != duel_channel:
+        return await interaction.response.send_message("❌ Use this in the designated duel channel.", ephemeral=True)
+
+    id1, id2 = str(interaction.user.id), str(user.id)
+    user1 = users_collection.find_one({"discord_id": id1})
+    user2 = users_collection.find_one({"discord_id": id2})
+
+    if not user1 or not user2:
+        return await interaction.response.send_message("❌ Both users must be verified to duel.", ephemeral=True)
+
+    h1, h2 = user1["cfid"], user2["cfid"]
+
+    thread = await interaction.channel.create_thread(
+        name=f"duel-{interaction.user.name}-vs-{user.name}",
+        type=discord.ChannelType.private_thread
     )
-    await interaction.response.send_message("✅ Duel challenge channel has been set.", ephemeral=True)
+
+    await thread.send(
+        f"{user.mention}, do you accept the duel challenge from {interaction.user.mention}?",
+        view=DuelConfirmView(user, thread, min_rating, max_rating, h1, h2)
+    )
+
+    await interaction.response.send_message("📨 Duel request sent!", ephemeral=True)
+
 
 # ------------------ Slash Command: /setmodchannel ------------------
 @tree.command(name="setmodchannel", description="Set the mod feedback channel (Admin only)")
@@ -598,7 +635,6 @@ async def get_unsolved_problem(min_rating, max_rating, handle1, handle2):
 
             problems = data["result"]["problems"]
 
-        # Fetch solved problems by both users
         async def get_solved(handle):
             async with session.get(f"https://codeforces.com/api/user.status?handle={handle}") as resp:
                 submissions = await resp.json()
@@ -624,41 +660,23 @@ async def get_unsolved_problem(min_rating, max_rating, handle1, handle2):
 
         return random.choice(unsolved)
 
-async def wait_for_ac(handle1, handle2, problem, timeout_minutes=20):
-    """
-    Waits for up to `timeout_minutes` for either handle to solve the given problem.
-    Returns the winner handle if solved, or None if timeout.
-    """
-    contest_id = problem['contestId']
-    index = problem['index']
-    start_time = datetime.datetime.now(datetime.UTC)
-    timeout = datetime.timedelta(minutes=timeout_minutes)
 
-    async def check_solved(handle):
-        url = f"https://codeforces.com/api/user.status?handle={handle}&from=1&count=30"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                data = await resp.json()
-                if data["status"] != "OK":
-                    return False
-                submissions = data["result"]
-                for sub in submissions:
-                    if (sub["verdict"] == "OK" and
-                        sub["problem"]["contestId"] == contest_id and
-                        sub["problem"]["index"] == index and
-                        datetime.datetime.fromtimestamp(sub["creationTimeSeconds"]) > start_time):
-                        return True
-        return False
+async def wait_for_ac(handle1, handle2, problem, timeout_minutes=15):
+    url = f"https://codeforces.com/api/user.status"
+    end_time = datetime.datetime.now(datetime.UTC) + datetime.timedelta(minutes=timeout_minutes)
+    contest_id = problem["contestId"]
+    index = problem["index"]
 
-    # Poll every 30 seconds
-    while datetime.datetime.now(datetime.UTC) - start_time < timeout:
-        if await check_solved(handle1):
-            return handle1
-        if await check_solved(handle2):
-            return handle2
-        await asyncio.sleep(30)
-
-    return None  # Timeout
+    while datetime.datetime.now(datetime.UTC) < end_time:
+        for handle in [handle1, handle2]:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{url}?handle={handle}") as resp:
+                    data = await resp.json()
+                    for sub in data.get("result", []):
+                        if sub["verdict"] == "OK" and sub["problem"]["contestId"] == contest_id and sub["problem"]["index"] == index:
+                            return handle
+        await asyncio.sleep(10)
+    return None
 
 
 # ------------------ Slash Command: /cfid ------------------
@@ -819,88 +837,95 @@ async def duel(interaction: discord.Interaction, user: discord.User, min_rating:
 
     # Define DuelConfirmView with required arguments
     class DuelConfirmView(discord.ui.View):
-        def __init__(self, user, thread, min_rating, max_rating, h1, h2):
-            super().__init__(timeout=180)
-            self.user = user
-            self.thread = thread
-            self.min_rating = min_rating
-            self.max_rating = max_rating
-            self.h1 = h1
-            self.h2 = h2
+    def __init__(self, user, thread, min_rating, max_rating, h1, h2):
+        super().__init__(timeout=None)
+        self.user = user
+        self.thread = thread
+        self.min_rating = min_rating
+        self.max_rating = max_rating
+        self.h1 = h1
+        self.h2 = h2
+        self.problem_given = False
 
-        @discord.ui.button(label="✅ Accept", style=discord.ButtonStyle.success)
-        async def accept(self, i: discord.Interaction, _):
-            if i.user.id != self.user.id:
-                return await i.response.send_message("❌ Only the invited user can accept the duel.", ephemeral=True)
+    @discord.ui.button(label="✅ Accept", style=discord.ButtonStyle.success)
+    async def accept(self, i: discord.Interaction, button: discord.ui.Button):
+        if i.user.id != self.user.id:
+            return await i.response.send_message("❌ Only the invited user can accept the duel.", ephemeral=True)
 
-            try:
-                problem = await get_unsolved_problem(self.min_rating, self.max_rating, self.h1, self.h2)
-            except Exception as e:
-                await self.thread.send(f"❌ Error fetching problem: {e}")
-                return await self.thread.delete()
+        if self.problem_given:
+            return await i.response.send_message("⚠️ Duel already accepted.", ephemeral=True)
 
-            if not problem:
-                await self.thread.send("❌ Could not find a suitable problem.")
-                return await self.thread.delete()
+        self.problem_given = True
+        for child in self.children:
+            child.disabled = True
+        await i.message.edit(view=self)
 
-            await self.thread.send(
-                f"🎯 Problem: [{problem['name']}](https://codeforces.com/problemset/problem/{problem['contestId']}/{problem['index']})"
-            )
+        try:
+            problem = await get_unsolved_problem(self.min_rating, self.max_rating, self.h1, self.h2)
+        except Exception as e:
+            await self.thread.send(f"❌ Error fetching problem: {e}")
+            return await self.thread.delete()
 
-            winner = await wait_for_ac(self.h1, self.h2, problem)
-            if not winner:
-                await self.thread.send("⏳ No one solved the problem in time. Duel ended.")
-            else:
-                loser = self.h2 if winner == self.h1 else self.h1
-                record_duel_result(winner, loser)
-                await self.thread.send(f"🏆 `{winner}` wins the duel!\n❌ `{loser}` loses.")
-                await asyncio.sleep(2)  # Optional: give time for message to show before deletion
+        if not problem:
+            await self.thread.send("❌ Could not find a suitable problem.")
+            return await self.thread.delete()
 
-            await self.thread.delete()
+        await self.thread.send(
+            f"🎯 Problem: [{problem['name']}](https://codeforces.com/problemset/problem/{problem['contestId']}/{problem['index']})"
+        )
 
+        winner = await wait_for_ac(self.h1, self.h2, problem)
+        if not winner:
+            await self.thread.send("⏳ No one solved the problem in time. Duel ended.")
+        else:
+            loser = self.h2 if winner == self.h1 else self.h1
+            record_duel_result(winner, loser)
+            await self.thread.send(f"🏆 `{winner}` wins the duel!\n❌ `{loser}` loses.")
+            await asyncio.sleep(2)
 
-        @discord.ui.button(label="❌ Reject", style=discord.ButtonStyle.danger)
-        async def reject(self, i: discord.Interaction, _):
-            if i.user.id != self.user.id:
-                return await i.response.send_message("❌ Only the invited user can reject the duel.", ephemeral=True)
-            await self.thread.send("❌ Duel cancelled.")
-            await self.thread.delete()
+        await self.thread.delete()
 
-        async def on_timeout(self):
-            try:
-                await self.thread.send("⌛ Duel timed out due to no response.")
-                await self.thread.delete()
-            except:
-                pass
+    @discord.ui.button(label="❌ Reject", style=discord.ButtonStyle.danger)
+    async def reject(self, i: discord.Interaction, button: discord.ui.Button):
+        if i.user.id != self.user.id:
+            return await i.response.send_message("❌ Only the invited user can reject the duel.", ephemeral=True)
 
-    await thread.send(
-        f"{user.mention}, do you accept the duel challenge from {interaction.user.mention}?",
-        view=DuelConfirmView(user, thread, min_rating, max_rating, h1, h2)
-    )
-
-    await interaction.response.send_message("📨 Duel request sent.", ephemeral=True)
+        for child in self.children:
+            child.disabled = True
+        await i.message.edit(view=self)
+        await self.thread.send("❌ Duel cancelled.")
+        await self.thread.delete()
 
 
 
 
 # ------------------ Duel Leaderboard ------------------
-@tree.command(name="duelleaderboard", description="See top duel performers")
+@tree.command(name="duelleaderboard", description="🏆 See top Codeforces duel performers")
 async def duelleaderboard(interaction: discord.Interaction):
     users = users_collection.find().sort("duel_points", -1).limit(10)
-    msg = "🏆 **Top Duel Performers** 🏆\n"
-    for i, user in enumerate(users, 1):
-        msg += f"**{i}.** `{user['cfid']}` → {user.get('duel_points', 0)} points\n"
-    await interaction.response.send_message(msg)
+    leaderboard = "🏆 **Top Duel Performers** 🏆\n\n"
+
+    for i, user in enumerate(users, start=1):
+        cfid = user.get("cfid", "Unknown")
+        points = user.get("duel_points", 0)
+        leaderboard += f"**{i}.** `{cfid}` — {points} points\n"
+
+    await interaction.response.send_message(leaderboard)
 
 
 # ------------------ My Duel Points ------------------
-@tree.command(name="myduelpoints", description="See your current duel points")
+@tree.command(name="myduelpoints", description="📊 Check your current duel points")
 async def myduelpoints(interaction: discord.Interaction):
     user = users_collection.find_one({"discord_id": str(interaction.user.id)})
-    if not user:
-        return await interaction.response.send_message("You must be verified.")
+
+    if not user or "cfid" not in user:
+        return await interaction.response.send_message("❌ You must be verified first.", ephemeral=True)
+
+    cfid = user["cfid"]
     points = user.get("duel_points", 0)
-    await interaction.response.send_message(f"📊 `{user['cfid']}` has **{points}** duel points.")
+
+    await interaction.response.send_message(f"📈 `{cfid}` has **{points}** duel points.")
+
 
 
 # ------------------ Record Duel Result ------------------
@@ -949,27 +974,61 @@ def generate_duel_history_graph(history, username):
     return buf
 
 # ------------------ /myduelhistory ------------------
-@tree.command(name="myduelhistory", description="View your duel point progression graph")
+def generate_duel_history_graph(history, username):
+    if not history:
+        return None
+
+    dates = [datetime.datetime.fromtimestamp(entry["timestamp"]) for entry in history]
+    points = []
+    total = 0
+    for entry in history:
+        total += entry["duel_points"]
+        points.append(total)
+
+    plt.style.use("dark_background")
+    plt.figure(figsize=(8, 4))
+    plt.plot(dates, points, marker='o', linestyle='-', color='lime', label='Duel Points')
+    plt.axhline(0, color='red', linestyle='--', linewidth=1)
+
+    plt.title(f"{username}'s Duel History")
+    plt.xlabel("Date")
+    plt.ylabel("Points")
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.legend()
+
+    buf = BytesIO()
+    plt.savefig(buf, format="png", dpi=150)
+    buf.seek(0)
+    plt.close()
+    return buf
+
+@tree.command(name="myduelhistory", description="📉 View your duel point progression graph")
 async def myduelhistory(interaction: discord.Interaction):
     user = users_collection.find_one({"discord_id": str(interaction.user.id)})
-    if not user:
-        return await interaction.response.send_message("❌ You must be verified.", ephemeral=True)
+
+    if not user or "cfid" not in user:
+        return await interaction.response.send_message("❌ You must be verified first.", ephemeral=True)
 
     history = user.get("duel_history", [])
     if not history:
         return await interaction.response.send_message("📉 No duel history found.", ephemeral=True)
 
-    buf = generate_duel_history_graph(history, interaction.user.display_name)
-    file = discord.File(buf, filename="duel_history.png")
+    graph_buf = generate_duel_history_graph(history, user['cfid'])
 
+    if not graph_buf:
+        return await interaction.response.send_message("⚠️ Could not generate history graph.")
+
+    file = discord.File(graph_buf, filename="duel_history.png")
     embed = discord.Embed(
-        title=f"{interaction.user.display_name}'s Duel History",
-        description="📈 Here's how your duel points changed over time.",
+        title=f"{user['cfid']}'s Duel History",
+        description="📈 Your duel performance over time",
         color=discord.Color.green()
     )
     embed.set_image(url="attachment://duel_history.png")
 
     await interaction.response.send_message(embed=embed, file=file)
+
 
 # ------------------ Compare Features ------------------
 
