@@ -150,19 +150,28 @@ async def setreminderchannel(interaction: discord.Interaction,
 
 def record_duel_result(winner_cfid, loser_cfid):
     users_collection.update_one({"cfid": winner_cfid}, {"$inc": {"duel_points": 1}})
-    users_collection.update_one({"cfid": loser_cfid}, {"$inc": {"duel_points": -1}})
 
+    # Log history with +1 for winner, 0 for loser
     timestamp = int(datetime.datetime.now(datetime.UTC).timestamp())
-    for cfid, won in [(winner_cfid, True), (loser_cfid, False)]:
-        users_collection.update_one(
-            {"cfid": cfid},
-            {"$push": {
-                "duel_history": {
-                    "timestamp": timestamp,
-                    "duel_points": 1 if won else 0
-                }
-            }}
-        )
+    users_collection.update_one(
+        {"cfid": winner_cfid},
+        {"$push": {
+            "duel_history": {
+                "timestamp": timestamp,
+                "duel_points": 1
+            }
+        }}
+    )
+    users_collection.update_one(
+        {"cfid": loser_cfid},
+        {"$push": {
+            "duel_history": {
+                "timestamp": timestamp,
+                "duel_points": 0  # no loss
+            }
+        }}
+    )
+
 
 
 # ------------------ Slash Command: /setmodchannel ------------------
