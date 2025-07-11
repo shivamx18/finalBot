@@ -623,6 +623,42 @@ async def get_unsolved_problem(min_rating, max_rating, handle1, handle2):
 
         return random.choice(unsolved)
 
+async def wait_for_ac(handle1, handle2, problem, timeout_minutes=20):
+    """
+    Waits for up to `timeout_minutes` for either handle to solve the given problem.
+    Returns the winner handle if solved, or None if timeout.
+    """
+    contest_id = problem['contestId']
+    index = problem['index']
+    start_time = datetime.datetime.utcnow()
+    timeout = datetime.timedelta(minutes=timeout_minutes)
+
+    async def check_solved(handle):
+        url = f"https://codeforces.com/api/user.status?handle={handle}&from=1&count=30"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                data = await resp.json()
+                if data["status"] != "OK":
+                    return False
+                submissions = data["result"]
+                for sub in submissions:
+                    if (sub["verdict"] == "OK" and
+                        sub["problem"]["contestId"] == contest_id and
+                        sub["problem"]["index"] == index and
+                        datetime.datetime.fromtimestamp(sub["creationTimeSeconds"]) > start_time):
+                        return True
+        return False
+
+    # Poll every 30 seconds
+    while datetime.datetime.utcnow() - start_time < timeout:
+        if await check_solved(handle1):
+            return handle1
+        if await check_solved(handle2):
+            return handle2
+        await asyncio.sleep(30)
+
+    return None  # Timeout
+
 
 # ------------------ Slash Command: /cfid ------------------
 @tree.command(name="cfid", description="Get a user's Codeforces handle")
