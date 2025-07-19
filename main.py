@@ -494,28 +494,65 @@ async def fetch_problems_from_cf(tag_filter: List[str] = None, min_rating: int =
 
             return random.sample(problems, min(5, len(problems)))
 
+# @tree.command(name="thank", description="Publicly thank someone for helping you")
+# @app_commands.describe(user="The helpful person you want to thank", reason="Why are you thanking them?")
+# async def thank(interaction: discord.Interaction, user: discord.User, reason: str):
+#     if user.id == interaction.user.id:
+#         return await interaction.response.send_message("❌ You can't thank yourself!", ephemeral=True)
+
+#     # Save thanks to DB
+#     users_collection.update_one(
+#         {"discord_id": str(user.id)},
+#         {"$inc": {"thanks": 1}},
+#         upsert=True
+#     )
+
+#     # Build embed
+#     embed = discord.Embed(
+#         title="🎉 You've Been Thanked!",
+#         description=f"**{user.mention}** was thanked by **{interaction.user.mention}**",
+#         color=discord.Color.gold()
+#     )
+#     embed.add_field(name="💬 Reason", value=reason, inline=False)
+#     embed.set_thumbnail(url=user.avatar.url if user.avatar else discord.Embed.Empty)
+#     embed.set_footer(text="Spread positivity 🤝")
+
+#     await interaction.response.send_message(embed=embed)
+
 @tree.command(name="thank", description="Publicly thank someone for helping you")
 @app_commands.describe(user="The helpful person you want to thank", reason="Why are you thanking them?")
 async def thank(interaction: discord.Interaction, user: discord.User, reason: str):
     if user.id == interaction.user.id:
         return await interaction.response.send_message("❌ You can't thank yourself!", ephemeral=True)
 
-    # Save thanks to DB
+    # Save thanks count
     users_collection.update_one(
         {"discord_id": str(user.id)},
         {"$inc": {"thanks": 1}},
         upsert=True
     )
 
-    # Build embed
+    # ✨ Positivity quotes
+    quotes = [
+        "Kindness is free, sprinkle that stuff everywhere.",
+        "One kind word can change someone’s entire day.",
+        "Gratitude turns what we have into enough.",
+        "Appreciation is a wonderful thing. It makes what is excellent in others belong to us as well.",
+        "Every act of kindness creates a ripple with no logical end."
+    ]
+    selected_quote = random.choice(quotes)
+
+    # 📝 Thank embed
     embed = discord.Embed(
-        title="🎉 You've Been Thanked!",
-        description=f"**{user.mention}** was thanked by **{interaction.user.mention}**",
+        title="💛 Heartfelt Thanks!",
+        description=(
+            f"**{user.mention}** has been thanked by **{interaction.user.mention}**!\n\n"
+            f"**Why?**\n> *{reason}*"
+        ),
         color=discord.Color.gold()
     )
-    embed.add_field(name="💬 Reason", value=reason, inline=False)
-    embed.set_thumbnail(url=user.avatar.url if user.avatar else discord.Embed.Empty)
-    embed.set_footer(text="Spread positivity 🤝")
+    embed.set_thumbnail(url=user.display_avatar.url if user.avatar else None)
+    embed.set_footer(text=f"✨ {selected_quote}")
 
     await interaction.response.send_message(embed=embed)
 
