@@ -1538,10 +1538,89 @@ async def check_contests():
         for contest in upcoming:
             if not enabled.get(contest["platform"], False):
                 continue
-            msg = message_template.format(name=contest["name"], url=contest["url"], platform=contest["platform"], role=role.mention)
+
+        embed = discord.Embed(
+            title=f"📢 {contest['platform']} Contest Reminder!",
+            description=f"[{contest['name']}]({contest['url']})",
+            color=discord.Color.blurple()
+        )
+        start_time = contest.get("start")
+        if isinstance(start_time, datetime.datetime):
+            time_left = start_time - now
+            hours = int(time_left.total_seconds() // 3600)
+            minutes = int((time_left.total_seconds() % 3600) // 60)
+            time_str = f"{hours}h {minutes}m"
+        else:
+            time_str = "~5 hours"  # fallback
+
+embed.add_field(name="🕒 Starts In", value=time_str, inline=False)
+
+        embed.set_footer(text="Good luck and don't forget to register!")
+
+        try:
+            await channel.send(content=role.mention, embed=embed, allowed_mentions=discord.AllowedMentions(roles=True))
+        except:
+            pass
+
+@tree.command(name="nextround", description="Check upcoming CF, CC, or LC contests")
+async def nextround(interaction: discord.Interaction):
+    await interaction.response.defer()
+
+    upcoming = []
+    now = datetime.datetime.now(datetime.UTC)
+
+    async with aiohttp.ClientSession() as session:
+        # Fetch Codeforces
+        try:
+            resp = await session.get("https://codeforces.com/api/contest.list")
+            data = await resp.json()
+            for contest in data["result"]:
+                if contest["phase"] == "BEFORE":
+                    start = datetime.datetime.utcfromtimestamp(contest["startTimeSeconds"])
+                    if start > now:
+                        upcoming.append({
+                            "name": contest["name"],
+                            "start": start,
+                            "url": f"https://codeforces.com/contest/{contest['id']}",
+                            "platform": "Codeforces"
+                        })
+        except: pass
+
+        # Fetch LeetCode & CodeChef via Kontests API
+        for plat, url in [("LeetCode", "leet_code"), ("CodeChef", "code_chef")]:
             try:
-                await channel.send(msg, allowed_mentions=discord.AllowedMentions(roles=True))
+                r = await session.get(f"https://kontests.net/api/v1/{url}")
+                contests = await r.json()
+                for contest in contests:
+                    start = datetime.datetime.fromisoformat(contest["start_time"].replace("Z", "+00:00"))
+                    if start > now:
+                        upcoming.append({
+                            "name": contest["name"],
+                            "start": start,
+                            "url": contest["url"],
+                            "platform": plat
+                        })
             except: pass
+
+    # Sort by soonest
+    upcoming.sort(key=lambda c: c["start"])
+    if not upcoming:
+        return await interaction.followup.send("❌ No upcoming contests found.")
+
+    embed = discord.Embed(title="📅 Upcoming Contests", color=discord.Color.green())
+    for contest in upcoming[:5]:
+        start_in = contest["start"] - now
+        hours = int(start_in.total_seconds() // 3600)
+        minutes = int((start_in.total_seconds() % 3600) // 60)
+        embed.add_field(
+            name=f"{contest['platform']} – {contest['name']}",
+            value=f"Starts in: `{hours}h {minutes}m`\n[Link]({contest['url']})",
+            inline=False
+        )
+
+    await interaction.followup.send(embed=embed)
+
+
 
 # ------------------ Slash Command: /trainingplan ------------------
 @tree.command(name="trainingplan", description="Get a personalized Codeforces training plan")
@@ -1686,87 +1765,6 @@ async def post_potds():
                     color=discord.Color.purple()
                 )
                 await channel.send(content=f"{role.mention}", embed=embed)
-
-# def generate_cf_heatmap(solved_dates, cfid):
-#     """Generate heatmap image and return BytesIO"""
-#     today = datetime.date.today()
-#     start_date = today - datetime.timedelta(days=365)
-#     dates = list(solved_dates.keys())
-
-#     heatmap_data = defaultdict(int)
-#     for dt in dates:
-#         if dt >= start_date:
-#             heatmap_data[dt] += solved_dates[dt]
-
-#     days = (today - start_date).days + 1
-#     counts = [heatmap_data.get(start_date + datetime.timedelta(days=i), 0) for i in range(days)]
-
-#     weeks = (days + start_date.weekday()) // 7 + 1
-#     mat = np.zeros((7, weeks))
-
-#     for i, count in enumerate(counts):
-#         date = start_date + datetime.timedelta(days=i)
-#         week = (i + start_date.weekday()) // 7
-#         weekday = date.weekday()
-#         mat[weekday][week] = count
-
-#     fig, ax = plt.subplots(figsize=(14, 3))
-#     cmap = plt.cm.Reds
-#     im = ax.imshow(mat, cmap=cmap, aspect='auto', interpolation='nearest')
-
-#     # Customize
-#     ax.set_xticks([])
-#     ax.set_yticks(range(7))
-#     ax.set_yticklabels(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
-#     ax.set_title(f"📅 CF Solve Heatmap for {cfid}")
-
-#     # Color bar
-#     cbar = plt.colorbar(im, ax=ax, orientation="vertical")
-#     cbar.set_label("Solved Count")
-
-#     plt.tight_layout()
-#     buf = BytesIO()
-#     plt.savefig(buf, format='png')
-#     buf.seek(0)
-#     plt.close()
-#     return buf
-
-# @tree.command(name="cfheatmap", description="View your Codeforces AC heatmap (like GitHub)")
-# async def cfheatmap(interaction: discord.Interaction):
-#     user = users_collection.find_one({"discord_id": str(interaction.user.id)})
-#     if not user or "cfid" not in user:
-#         return await interaction.response.send_message("❌ You must be verified first.")
-
-#     cfid = user["cfid"]
-#     await interaction.response.defer()
-
-#     solved_dates = await fetch_ac_submissions(cfid)
-#     if solved_dates is None:
-#         return await interaction.followup.send("⚠️ Failed to fetch submissions.")
-
-#     buf = generate_cf_heatmap(solved_dates, cfid)
-#     total_ac = sum(solved_dates.values())
-
-#     # Streak Calculation
-#     streak, max_streak = 0, 0
-#     today = datetime.date.today()
-#     for i in range(365):
-#         date = today - datetime.timedelta(days=i)
-#         if solved_dates.get(date):
-#             streak += 1
-#             max_streak = max(max_streak, streak)
-#         else:
-#             streak = 0
-
-#     embed = discord.Embed(
-#         title=f"{cfid}'s Heatmap",
-#         description=f"✅ Total Solved: `{total_ac}`\n🔥 Best Streak: `{max_streak}` days",
-#         color=discord.Color.red()
-#     )
-#     file = discord.File(buf, filename="heatmap.png")
-#     embed.set_image(url="attachment://heatmap.png")
-
-#     await interaction.followup.send(embed=embed, file=file)
 
 import seaborn as sns
 import pandas as pd
