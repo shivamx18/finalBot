@@ -646,7 +646,8 @@ async def setpotd2week(interaction: discord.Interaction,
 
 
 # ------------------ Slash Command: /verify ------------------
-#verify command
+import asyncio
+
 @tree.command(name="verify", description="Verify your Codeforces handle")
 @app_commands.describe(cfid="Your Codeforces handle")
 async def verify(interaction: discord.Interaction, cfid: str):
@@ -655,13 +656,11 @@ async def verify(interaction: discord.Interaction, cfid: str):
     user_id = str(interaction.user.id)
     verification_code = str(random.randint(1000, 9999))
 
-    # Create private thread
     thread = await interaction.channel.create_thread(
-        name=f"verify-{interaction.user.name}",
+        name=f"verify-{interaction.user.name[:20]}",
         type=discord.ChannelType.private_thread
     )
 
-    # Confirm button view
     class ConfirmView(discord.ui.View):
         @discord.ui.button(label="✅ Verify", style=discord.ButtonStyle.success)
         async def confirm(self, button_interaction: discord.Interaction, _):
@@ -672,7 +671,6 @@ async def verify(interaction: discord.Interaction, cfid: str):
                 )
                 return
 
-            # Fetch Codeforces data
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(f"https://codeforces.com/api/user.info?handles={cfid}") as resp:
@@ -688,23 +686,19 @@ async def verify(interaction: discord.Interaction, cfid: str):
                         new_rating = info.get("rating", 0)
 
             except Exception:
-                await button_interaction.response.send_message(
-                    "❌ Verification failed. Make sure your Codeforces first name matches the code.",
-                    ephemeral=True
-                )
+                await thread.send("❌ Verification failed. Make sure your Codeforces first name matches the code.\n"
+                                  "You can try again by reusing the `/verify` command.")
+                await asyncio.sleep(30)
+                await thread.delete()
                 return
 
-            # Handle old role removal
-            prev_user = users_collection.find_one({"discord_id": user_id})
-            old_rank = prev_user.get("rank") if prev_user else None
-            # Remove all Codeforces rank roles
+            # Remove all existing CF rank roles
             for rank_name in role_colors:
                 role_obj = discord.utils.get(interaction.guild.roles, name=rank_name.title())
                 if role_obj and role_obj in interaction.user.roles:
                     await interaction.user.remove_roles(role_obj)
 
-
-            # Create or assign new rank role
+            # Assign new rank role
             role_name = new_rank.title()
             role_color = role_colors.get(new_rank, 0xCCCCCC)
             role = discord.utils.get(interaction.guild.roles, name=role_name)
@@ -723,18 +717,22 @@ async def verify(interaction: discord.Interaction, cfid: str):
                     "cfid": cfid,
                     "rating": new_rating,
                     "rank": new_rank,
-                    "guild_id": interaction.guild_id
+                    "guild_id": interaction.guild_id,
+                    "handle_verified": True
                 }},
                 upsert=True
             )
 
-            # RANK-UP CELEBRATION
+            # Rank-up Celebration
             from random import choice
             RANK_ORDER = [
                 "newbie", "pupil", "specialist", "expert",
                 "candidate master", "master", "international master",
                 "grandmaster", "international grandmaster", "legendary grandmaster"
             ]
+
+            prev_user = users_collection.find_one({"discord_id": user_id})
+            old_rank = prev_user.get("rank") if prev_user else None
 
             def is_rank_up(new_r, old_r):
                 try:
@@ -767,11 +765,10 @@ async def verify(interaction: discord.Interaction, cfid: str):
                         embed.set_footer(text="👏 Congratulations!", icon_url=interaction.user.display_avatar.url)
                         await channel.send(embed=embed)
 
-            # Final response
             await thread.send(f"✅ Verified as `{cfid}` with role **{role_name}**! 🎉")
+            await asyncio.sleep(30)
             await thread.delete()
 
-    # Start verification instructions
     await thread.send(
         f"{interaction.user.mention}, to verify:\n"
         f"1. Go to your [Codeforces settings](https://codeforces.com/settings)\n"
@@ -993,32 +990,33 @@ def record_duel_result(winner_cfid, loser_cfid):
         )
 
 
+
 # @tree.command(name="duel", description="Challenge someone to a Codeforces duel")
 # @app_commands.describe(user="Opponent", min_rating="Minimum rating", max_rating="Maximum rating")
 # async def duel(interaction: discord.Interaction, user: discord.User, min_rating: int, max_rating: int):
+#     await interaction.response.defer(ephemeral=True)  # 🔧 Immediate response
+
 #     guild_id = interaction.guild_id
 #     guild_config = guilds_collection.find_one({"guild_id": guild_id})
 #     duel_channel = guild_config.get("duel_channel") if guild_config else None
 
 #     if duel_channel and interaction.channel_id != duel_channel:
-#         return await interaction.response.send_message("❌ Use this in the designated duel channel.", ephemeral=True)
+#         return await interaction.followup.send("❌ Use this in the designated duel channel.", ephemeral=True)
 
 #     id1, id2 = str(interaction.user.id), str(user.id)
 #     user1 = users_collection.find_one({"discord_id": id1})
 #     user2 = users_collection.find_one({"discord_id": id2})
 
 #     if not user1 or not user2:
-#         return await interaction.response.send_message("❌ Both users must be verified to duel.", ephemeral=True)
+#         return await interaction.followup.send("❌ Both users must be verified to duel.", ephemeral=True)
 
 #     h1, h2 = user1["cfid"], user2["cfid"]
 
-#     # Create a private thread
 #     thread = await interaction.channel.create_thread(
 #         name=f"duel-{interaction.user.name}-vs-{user.name}",
 #         type=discord.ChannelType.private_thread
 #     )
 
-#     # Define DuelConfirmView with required arguments
 #     class DuelConfirmView(discord.ui.View):
 #         def __init__(self, user, thread, min_rating, max_rating, h1, h2):
 #             super().__init__(timeout=None)
@@ -1036,7 +1034,7 @@ def record_duel_result(winner_cfid, loser_cfid):
 #                 return await interaction.response.send_message("❌ Only the invited user can accept.", ephemeral=True)
 
 #             if self.disabled:
-#                 return await interaction.response.send_message("⚠️ This duel was already processed.", ephemeral=True)
+#                 return await interaction.response.send_message("⚠️ Duel already accepted/rejected.", ephemeral=True)
 
 #             self.disabled = True
 #             for item in self.children:
@@ -1074,7 +1072,7 @@ def record_duel_result(winner_cfid, loser_cfid):
 #                 return await interaction.response.send_message("❌ Only the invited user can reject.", ephemeral=True)
 
 #             if self.disabled:
-#                 return await interaction.response.send_message("⚠️ This duel was already processed.", ephemeral=True)
+#                 return await interaction.response.send_message("⚠️ Duel already accepted/rejected.", ephemeral=True)
 
 #             self.disabled = True
 #             for item in self.children:
@@ -1085,10 +1083,17 @@ def record_duel_result(winner_cfid, loser_cfid):
 #             await asyncio.sleep(1)
 #             await self.thread.delete()
 
+#     await thread.send(
+#         f"{user.mention}, do you accept the duel challenge from {interaction.user.mention}?",
+#         view=DuelConfirmView(user, thread, min_rating, max_rating, h1, h2)
+#     )
+
+#     await interaction.followup.send("📨 Duel request sent in a private thread.", ephemeral=True)
+
 @tree.command(name="duel", description="Challenge someone to a Codeforces duel")
 @app_commands.describe(user="Opponent", min_rating="Minimum rating", max_rating="Maximum rating")
 async def duel(interaction: discord.Interaction, user: discord.User, min_rating: int, max_rating: int):
-    await interaction.response.defer(ephemeral=True)  # 🔧 Immediate response
+    await interaction.response.defer(ephemeral=True)
 
     guild_id = interaction.guild_id
     guild_config = guilds_collection.find_one({"guild_id": guild_id})
@@ -1112,91 +1117,83 @@ async def duel(interaction: discord.Interaction, user: discord.User, min_rating:
     )
 
     class DuelConfirmView(discord.ui.View):
-        def __init__(self, user, thread, min_rating, max_rating, h1, h2):
+        def __init__(self):
             super().__init__(timeout=None)
-            self.user = user
-            self.thread = thread
-            self.min_rating = min_rating
-            self.max_rating = max_rating
-            self.h1 = h1
-            self.h2 = h2
-            self.disabled = False
 
         @discord.ui.button(label="✅ Accept", style=discord.ButtonStyle.success)
-        async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
-            if interaction.user.id != self.user.id:
-                return await interaction.response.send_message("❌ Only the invited user can accept.", ephemeral=True)
+        async def accept(self, interaction2: discord.Interaction, button: discord.ui.Button):
+            if interaction2.user.id != user.id:
+                return await interaction2.response.send_message("❌ Only the invited user can accept.", ephemeral=True)
 
-            if self.disabled:
-                return await interaction.response.send_message("⚠️ Duel already accepted/rejected.", ephemeral=True)
-
-            self.disabled = True
             for item in self.children:
                 item.disabled = True
-            await interaction.message.edit(view=self)
+            await interaction2.message.edit(view=self)
 
             try:
-                problem = await get_unsolved_problem(self.min_rating, self.max_rating, self.h1, self.h2)
+                problem = await get_unsolved_problem(min_rating, max_rating, h1, h2)
             except Exception as e:
-                await self.thread.send(f"❌ Error fetching problem: {e}")
-                return await self.thread.delete()
+                await thread.send(f"❌ Error fetching problem: {e}")
+                return await thread.delete()
 
             if not problem:
-                await self.thread.send("❌ No suitable problem found.")
-                return await self.thread.delete()
+                await thread.send("❌ No suitable problem found.")
+                return await thread.delete()
 
-            await self.thread.send(
-                f"🎯 Problem: [{problem['name']}](https://codeforces.com/problemset/problem/{problem['contestId']}/{problem['index']})"
+            name = problem["name"]
+            url = f"https://codeforces.com/problemset/problem/{problem['contestId']}/{problem['index']}"
+
+            await thread.send(
+                f"🎯 Problem for the duel: [{name}]({url})\n"
+                f"{interaction.user.mention} vs {user.mention}\n"
+                "🔘 Click the **Done** button once you've solved it!"
             )
 
-            winner = await wait_for_ac(self.h1, self.h2, problem)
-            if not winner:
-                await self.thread.send("⏳ No one solved the problem. Duel ended.")
-            else:
-                loser = self.h2 if winner == self.h1 else self.h1
-                record_duel_result(winner, loser)
-                await self.thread.send(f"🏆 `{winner}` wins the duel!\n❌ `{loser}` loses.")
+            class DoneView(discord.ui.View):
+                def __init__(self):
+                    super().__init__(timeout=None)
+                    self.problem = problem
 
-            await asyncio.sleep(2)
-            await self.thread.delete()
+                @discord.ui.button(label="✅ Done", style=discord.ButtonStyle.primary)
+                async def check_done(self, done_interaction: discord.Interaction, button: discord.ui.Button):
+                    winner = await wait_for_ac(h1, h2, self.problem)
+                    if winner:
+                        loser = h2 if winner == h1 else h1
+                        record_duel_result(winner, loser)
+
+                        winner_user = interaction.user if winner == h1 else user
+                        loser_user = user if winner == h1 else interaction.user
+
+                        await thread.send(
+                            f"🏁 **Duel Complete!**\n"
+                            f"🏆 {winner_user.mention} solved the problem first!\n"
+                            f"❌ {loser_user.mention} better luck next time!"
+                        )
+                        await asyncio.sleep(30)
+                        await thread.delete()
+                    else:
+                        await done_interaction.response.send_message("⏳ No one has solved it yet. Keep trying!", ephemeral=True)
+
+            await thread.send("👇 Press once you've submitted your solution:", view=DoneView())
 
         @discord.ui.button(label="❌ Reject", style=discord.ButtonStyle.danger)
-        async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
-            if interaction.user.id != self.user.id:
-                return await interaction.response.send_message("❌ Only the invited user can reject.", ephemeral=True)
+        async def reject(self, interaction2: discord.Interaction, button: discord.ui.Button):
+            if interaction2.user.id != user.id:
+                return await interaction2.response.send_message("❌ Only the invited user can reject.", ephemeral=True)
 
-            if self.disabled:
-                return await interaction.response.send_message("⚠️ Duel already accepted/rejected.", ephemeral=True)
-
-            self.disabled = True
             for item in self.children:
                 item.disabled = True
-            await interaction.message.edit(view=self)
+            await interaction2.message.edit(view=self)
 
-            await self.thread.send("❌ Duel rejected.")
+            await thread.send("❌ Duel rejected.")
             await asyncio.sleep(1)
-            await self.thread.delete()
+            await thread.delete()
 
     await thread.send(
         f"{user.mention}, do you accept the duel challenge from {interaction.user.mention}?",
-        view=DuelConfirmView(user, thread, min_rating, max_rating, h1, h2)
+        view=DuelConfirmView()
     )
-
     await interaction.followup.send("📨 Duel request sent in a private thread.", ephemeral=True)
 
-
-# ------------------ Duel Leaderboard ------------------
-# @tree.command(name="duelleaderboard", description="🏆 See top Codeforces duel performers")
-# async def duelleaderboard(interaction: discord.Interaction):
-#     users = users_collection.find().sort("duel_points", -1).limit(10)
-#     leaderboard = "🏆 **Top Duel Performers** 🏆\n\n"
-
-#     for i, user in enumerate(users, start=1):
-#         cfid = user.get("cfid", "Unknown")
-#         points = user.get("duel_points", 0)
-#         leaderboard += f"**{i}.** `{cfid}` — {points} points\n"
-
-#     await interaction.response.send_message(leaderboard)
 
 @tree.command(name="duelleaderboard", description="📈See top duel performers")
 async def duelleaderboard(interaction: discord.Interaction):
@@ -1225,7 +1222,7 @@ async def myduelpoints(interaction: discord.Interaction):
 
 # ------------------ Record Duel Result ------------------
 def record_duel_result(winner_cfid, loser_cfid):
-    users_collection.update_one({"cfid": winner_cfid}, {"$inc": {"duel_points": 1}})
+    users_collection.update_one({"cfid": winner_cfid}, {"$inc": {"duel_points": 2}})
     users_collection.update_one({"cfid": loser_cfid}, {"$inc": {"duel_points": -1}})
 
     timestamp = int(datetime.datetime.now(datetime.UTC).timestamp())
@@ -1235,7 +1232,7 @@ def record_duel_result(winner_cfid, loser_cfid):
             {"$push": {
                 "duel_history": {
                     "timestamp": timestamp,
-                    "duel_points": 1 if won else -1
+                    "duel_points": 2 if won else -1
                 }
             }}
         )
