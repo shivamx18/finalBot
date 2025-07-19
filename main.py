@@ -1514,7 +1514,7 @@ async def check_contests():
                 if contest["phase"] != "BEFORE":
                     continue
                 start = datetime.datetime.utcfromtimestamp(contest["startTimeSeconds"]).replace(tzinfo=pytz.utc)
-                if 4.9 < (start - now).total_seconds() / 3600 < 5.1:
+                if 0 < (start - now).total_seconds() <= 86400:  # within 24 hours
                     upcoming.append({
                         "name": contest["name"],
                         "url": f"https://codeforces.com/contest/{contest['id']}",
@@ -1530,7 +1530,7 @@ async def check_contests():
             data = await lc.json()
             for contest in data:
                 start = datetime.datetime.fromisoformat(contest["start_time"].replace("Z", "+00:00"))
-                if 4.9 < (start - now).total_seconds() / 3600 < 5.1:
+                if 0 < (start - now).total_seconds() <= 86400:
                     upcoming.append({
                         "name": contest["name"],
                         "url": contest["url"],
@@ -1546,7 +1546,7 @@ async def check_contests():
             data = await cc.json()
             for contest in data:
                 start = datetime.datetime.fromisoformat(contest["start_time"].replace("Z", "+00:00"))
-                if 4.9 < (start - now).total_seconds() / 3600 < 5.1:
+                if 0 < (start - now).total_seconds() <= 86400:
                     upcoming.append({
                         "name": contest["name"],
                         "url": contest["url"],
@@ -1556,11 +1556,16 @@ async def check_contests():
         except Exception as e:
             print(f"Error fetching CodeChef: {e}")
 
+    if not upcoming:
+        return
+
     # Notify all guilds
     for guild_data in guilds_collection.find():
         channel_id = guild_data.get("reminder_channel")
         role_id = guild_data.get("reminder_role")
-        message_template = guild_data.get("reminder_message", "CONTEST TODAY: {name}\nREGISTER HERE: {url}\n{role}")
+        message_template = guild_data.get(
+            "reminder_message", "CONTEST TODAY: {name}\nREGISTER HERE: {url}\n{role}"
+        )
 
         enabled = {
             "Codeforces": guild_data.get("reminder_enable_cf", True),
@@ -1581,28 +1586,32 @@ async def check_contests():
             if not enabled.get(contest["platform"], False):
                 continue
 
+            time_left = contest["start"] - now
+            hours = int(time_left.total_seconds() // 3600)
+            minutes = int((time_left.total_seconds() % 3600) // 60)
+            time_str = f"{hours}h {minutes}m"
+
             embed = discord.Embed(
                 title=f"📢 {contest['platform']} Contest Reminder!",
                 description=f"[{contest['name']}]({contest['url']})",
                 color=discord.Color.blurple()
             )
-
-            start_time = contest.get("start")
-            if isinstance(start_time, datetime.datetime):
-                time_left = start_time - now
-                hours = int(time_left.total_seconds() // 3600)
-                minutes = int((time_left.total_seconds() % 3600) // 60)
-                time_str = f"{hours}h {minutes}m"
-            else:
-                time_str = "~5 hours"
-
             embed.add_field(name="🕒 Starts In", value=time_str, inline=False)
             embed.set_footer(text="Good luck and don't forget to register!")
 
             try:
-                await channel.send(content=role.mention, embed=embed, allowed_mentions=discord.AllowedMentions(roles=True))
+                await channel.send(
+                    content=message_template.format(
+                        name=contest["name"],
+                        url=contest["url"],
+                        role=role.mention
+                    ),
+                    embed=embed,
+                    allowed_mentions=discord.AllowedMentions(roles=True)
+                )
             except Exception as e:
-                print(f"Failed to send contest reminder to {guild.name}: {e}")
+                print(f"Failed to send contest reminder in {guild.name}: {e}")
+
 
 
 @tree.command(name="nextround", description="Check upcoming CF, CC, or LC contests")
@@ -1613,13 +1622,13 @@ async def nextround(interaction: discord.Interaction):
     now = datetime.datetime.now(datetime.UTC)
 
     async with aiohttp.ClientSession() as session:
-        # Fetch Codeforces
+        # Codeforces
         try:
             resp = await session.get("https://codeforces.com/api/contest.list")
             data = await resp.json()
             for contest in data["result"]:
                 if contest["phase"] == "BEFORE":
-                    start = datetime.datetime.utcfromtimestamp(contest["startTimeSeconds"])
+                    start = datetime.datetime.fromtimestamp(contest["startTimeSeconds"], tz=datetime.timezone.utc)
                     if start > now:
                         upcoming.append({
                             "name": contest["name"],
@@ -1627,9 +1636,10 @@ async def nextround(interaction: discord.Interaction):
                             "url": f"https://codeforces.com/contest/{contest['id']}",
                             "platform": "Codeforces"
                         })
-        except: pass
+        except Exception as e:
+            print(f"Error fetching CF: {e}")
 
-        # Fetch LeetCode & CodeChef via Kontests API
+        # LeetCode & CodeChef
         for plat, url in [("LeetCode", "leet_code"), ("CodeChef", "code_chef")]:
             try:
                 r = await session.get(f"https://kontests.net/api/v1/{url}")
@@ -1643,18 +1653,20 @@ async def nextround(interaction: discord.Interaction):
                             "url": contest["url"],
                             "platform": plat
                         })
-            except: pass
+            except Exception as e:
+                print(f"Error fetching {plat}: {e}")
 
-    # Sort by soonest
     upcoming.sort(key=lambda c: c["start"])
+
     if not upcoming:
         return await interaction.followup.send("❌ No upcoming contests found.")
 
     embed = discord.Embed(title="📅 Upcoming Contests", color=discord.Color.green())
+
     for contest in upcoming[:5]:
-        start_in = contest["start"] - now
-        hours = int(start_in.total_seconds() // 3600)
-        minutes = int((start_in.total_seconds() % 3600) // 60)
+        time_left = contest["start"] - now
+        hours = int(time_left.total_seconds() // 3600)
+        minutes = int((time_left.total_seconds() % 3600) // 60)
         embed.add_field(
             name=f"{contest['platform']} – {contest['name']}",
             value=f"Starts in: `{hours}h {minutes}m`\n[Link]({contest['url']})",
@@ -1662,7 +1674,6 @@ async def nextround(interaction: discord.Interaction):
         )
 
     await interaction.followup.send(embed=embed)
-
 
 
 # ------------------ Slash Command: /trainingplan ------------------
