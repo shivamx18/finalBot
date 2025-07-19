@@ -30,6 +30,7 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 
+
 # ------------------ Discord Bot Setup ------------------
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -42,6 +43,9 @@ db = mongo_client["codeforces_bot"]
 # Collections
 users_collection = db["users"]           # Stores verified users
 guilds_collection = db["guilds"]         # Stores guild config (duel/command channels)
+hunts_collection = db["hunts"]
+hunt_claims_collection = db["hunt_claims"]
+tz_ist = pytz.timezone("Asia/Kolkata")
 
 # ------------------ Role Colors by CF Rank ------------------
 role_colors = {
@@ -127,16 +131,6 @@ async def set_celebration_channel(interaction: discord.Interaction):
         upsert=True
     )
     await interaction.response.send_message("🎉 Celebration channel has been set!", ephemeral=True)
-# @tree.command(name="setrankcelebrationchannel", description="Set the channel for rank-up celebration messages")
-# @app_commands.checks.has_permissions(administrator=True)
-# async def set_rank_celebration_channel(interaction: discord.Interaction):
-#     guilds_collection.update_one(
-#         {"guild_id": interaction.guild_id},
-#         {"$set": {"rank_celebration_channel": interaction.channel_id}},
-#         upsert=True
-#     )
-#     await interaction.response.send_message("✅ Celebration channel set!", ephemeral=True)
-
 
 
 # ------------------ Slash Command: /setcommandchannel ------------------
@@ -272,7 +266,81 @@ async def disablereminder(interaction: discord.Interaction, platform: str):
     )
     await interaction.response.send_message(f"🔕 Reminders for **{platform.upper()}** disabled.", ephemeral=True)
 
-# Create a new command for setting the Solve Hunt channel
+# # Create a new command for setting the Solve Hunt channel
+# @tree.command(name="setsolvehuntchannel", description="Admin only: Set Solve Hunt challenge channel")
+# @app_commands.checks.has_permissions(administrator=True)
+# @app_commands.describe(channel="The channel where Solve Hunt problems will be posted")
+# async def setsolvehuntchannel(interaction: discord.Interaction, channel: discord.TextChannel):
+#     guilds_collection.update_one(
+#         {"guild_id": interaction.guild_id},
+#         {"$set": {"solvehunt_channel": channel.id}},
+#         upsert=True
+#     )
+#     await interaction.response.send_message(f"✅ Solve Hunt channel set to {channel.mention}", ephemeral=True)
+
+
+# # Scheduled Job (add to your scheduler setup):
+# async def post_solvehunt_problems():
+#     now = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
+#     if now.weekday() != 0:  # Monday
+#         return
+
+#     problems_by_rating = [1100, 1300, 1500, 1700, 1900]
+#     all_guilds = guilds_collection.find({"solvehunt_channel": {"$exists": True}})
+
+#     for guild_config in all_guilds:
+#         channel_id = guild_config["solvehunt_channel"]
+#         guild_id = guild_config["guild_id"]
+
+#         channel = bot.get_channel(channel_id)
+#         if not channel:
+#             continue
+
+#         embed = discord.Embed(
+#             title="🏹 Solve Hunt Challenge - Week Start!",
+#             description="Solve any 3 of the 5 problems below as fast as you can to earn the **Hunt3** role!",
+#             color=discord.Color.orange()
+#         )
+
+#         async with aiohttp.ClientSession() as session:
+#             for rating in problems_by_rating:
+#                 problem = await get_random_problem(session, rating)
+#                 if problem:
+#                     name = problem['name']
+#                     url = f"https://codeforces.com/problemset/problem/{problem['contestId']}/{problem['index']}"
+#                     embed.add_field(name=f"{rating} - {name}", value=f"[Solve Now]({url})", inline=False)
+
+#         await channel.send(embed=embed)
+
+#         # Remove old Hunt3 roles
+#         guild = bot.get_guild(guild_id)
+#         hunt_role = discord.utils.get(guild.roles, name="Hunt3")
+#         if not hunt_role:
+#             hunt_role = await guild.create_role(name="Hunt3", colour=discord.Colour.from_str("#FFA500"))
+
+#         for member in guild.members:
+#             if hunt_role in member.roles:
+#                 await member.remove_roles(hunt_role)
+
+# # Dummy function you must already have or implement
+# async def get_random_problem(session, rating):
+#     async with session.get(f"https://codeforces.com/api/problemset.problems") as resp:
+#         data = await resp.json()
+#         if data['status'] != 'OK':
+#             return None
+
+#         problems = [p for p in data['result']['problems']
+#                     if p.get("rating") == rating and 'contestId' in p]
+#         if not problems:
+#             return None
+#         return random.choice(problems)
+
+
+# # Scheduler Setup — call this in your start_scheduler or on_ready
+# @scheduler.scheduled_job("cron", day_of_week="mon", hour=0, minute=0, timezone="Asia/Kolkata")
+# async def scheduled_solvehunt():
+#     await post_solvehunt_problems()
+
 @tree.command(name="setsolvehuntchannel", description="Admin only: Set Solve Hunt challenge channel")
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.describe(channel="The channel where Solve Hunt problems will be posted")
@@ -284,11 +352,15 @@ async def setsolvehuntchannel(interaction: discord.Interaction, channel: discord
     )
     await interaction.response.send_message(f"✅ Solve Hunt channel set to {channel.mention}", ephemeral=True)
 
+# 🔁 Weekly problem poster (Monday at 00:00 IST)
+@scheduler.scheduled_job("cron", day_of_week="mon", hour=0, minute=0, timezone="Asia/Kolkata")
+async def scheduled_solvehunt():
+    await post_solvehunt_problems()
 
-# Scheduled Job (add to your scheduler setup):
+# 🔨 Core logic to post Solve Hunt problems
 async def post_solvehunt_problems():
-    now = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
-    if now.weekday() != 0:  # Monday
+    now = datetime.datetime.now(tz_ist)
+    if now.weekday() != 0:  # Ensure it's Monday
         return
 
     problems_by_rating = [1100, 1300, 1500, 1700, 1900]
@@ -298,7 +370,11 @@ async def post_solvehunt_problems():
         channel_id = guild_config["solvehunt_channel"]
         guild_id = guild_config["guild_id"]
 
-        channel = bot.get_channel(channel_id)
+        guild = bot.get_guild(guild_id)
+        if not guild:
+            continue
+
+        channel = guild.get_channel(channel_id)
         if not channel:
             continue
 
@@ -316,10 +392,10 @@ async def post_solvehunt_problems():
                     url = f"https://codeforces.com/problemset/problem/{problem['contestId']}/{problem['index']}"
                     embed.add_field(name=f"{rating} - {name}", value=f"[Solve Now]({url})", inline=False)
 
+        embed.set_footer(text="Good luck and don't forget to register your solves!")
         await channel.send(embed=embed)
 
-        # Remove old Hunt3 roles
-        guild = bot.get_guild(guild_id)
+        # 🧹 Remove old Hunt3 roles
         hunt_role = discord.utils.get(guild.roles, name="Hunt3")
         if not hunt_role:
             hunt_role = await guild.create_role(name="Hunt3", colour=discord.Colour.from_str("#FFA500"))
@@ -328,24 +404,19 @@ async def post_solvehunt_problems():
             if hunt_role in member.roles:
                 await member.remove_roles(hunt_role)
 
-# Dummy function you must already have or implement
+# 🔍 Fetch a random Codeforces problem of given rating
 async def get_random_problem(session, rating):
-    async with session.get(f"https://codeforces.com/api/problemset.problems") as resp:
+    async with session.get("https://codeforces.com/api/problemset.problems") as resp:
         data = await resp.json()
         if data['status'] != 'OK':
             return None
 
         problems = [p for p in data['result']['problems']
-                    if p.get("rating") == rating and 'contestId' in p]
+                    if p.get("rating") == rating and 'contestId' in p and 'index' in p]
         if not problems:
             return None
         return random.choice(problems)
 
-
-# Scheduler Setup — call this in your start_scheduler or on_ready
-@scheduler.scheduled_job("cron", day_of_week="mon", hour=0, minute=0, timezone="Asia/Kolkata")
-async def scheduled_solvehunt():
-    await post_solvehunt_problems()
 
 @tree.command(name="clearduelleaderboard", description="(Admin only) Clear the entire duel leaderboard")
 @app_commands.checks.has_permissions(administrator=True)
@@ -1447,11 +1518,13 @@ async def check_contests():
                     upcoming.append({
                         "name": contest["name"],
                         "url": f"https://codeforces.com/contest/{contest['id']}",
-                        "platform": "Codeforces"
+                        "platform": "Codeforces",
+                        "start": start
                     })
-        except: pass
+        except Exception as e:
+            print(f"Error fetching Codeforces: {e}")
 
-        # LeetCode (uses a GitHub mirror for now)
+        # LeetCode
         try:
             lc = await session.get("https://kontests.net/api/v1/leet_code")
             data = await lc.json()
@@ -1461,9 +1534,11 @@ async def check_contests():
                     upcoming.append({
                         "name": contest["name"],
                         "url": contest["url"],
-                        "platform": "LeetCode"
+                        "platform": "LeetCode",
+                        "start": start
                     })
-        except: pass
+        except Exception as e:
+            print(f"Error fetching LeetCode: {e}")
 
         # CodeChef
         try:
@@ -1475,9 +1550,11 @@ async def check_contests():
                     upcoming.append({
                         "name": contest["name"],
                         "url": contest["url"],
-                        "platform": "CodeChef"
+                        "platform": "CodeChef",
+                        "start": start
                     })
-        except: pass
+        except Exception as e:
+            print(f"Error fetching CodeChef: {e}")
 
     # Notify all guilds
     for guild_data in guilds_collection.find():
@@ -1504,28 +1581,29 @@ async def check_contests():
             if not enabled.get(contest["platform"], False):
                 continue
 
-        embed = discord.Embed(
-            title=f"📢 {contest['platform']} Contest Reminder!",
-            description=f"[{contest['name']}]({contest['url']})",
-            color=discord.Color.blurple()
-        )
-        start_time = contest.get("start")
-        if isinstance(start_time, datetime.datetime):
-            time_left = start_time - now
-            hours = int(time_left.total_seconds() // 3600)
-            minutes = int((time_left.total_seconds() % 3600) // 60)
-            time_str = f"{hours}h {minutes}m"
-        else:
-            time_str = "~5 hours"  # fallback
+            embed = discord.Embed(
+                title=f"📢 {contest['platform']} Contest Reminder!",
+                description=f"[{contest['name']}]({contest['url']})",
+                color=discord.Color.blurple()
+            )
 
-    embed.add_field(name="🕒 Starts In", value=time_str, inline=False)
+            start_time = contest.get("start")
+            if isinstance(start_time, datetime.datetime):
+                time_left = start_time - now
+                hours = int(time_left.total_seconds() // 3600)
+                minutes = int((time_left.total_seconds() % 3600) // 60)
+                time_str = f"{hours}h {minutes}m"
+            else:
+                time_str = "~5 hours"
 
-        embed.set_footer(text="Good luck and don't forget to register!")
+            embed.add_field(name="🕒 Starts In", value=time_str, inline=False)
+            embed.set_footer(text="Good luck and don't forget to register!")
 
-        try:
-            await channel.send(content=role.mention, embed=embed, allowed_mentions=discord.AllowedMentions(roles=True))
-        except:
-            pass
+            try:
+                await channel.send(content=role.mention, embed=embed, allowed_mentions=discord.AllowedMentions(roles=True))
+            except Exception as e:
+                print(f"Failed to send contest reminder to {guild.name}: {e}")
+
 
 @tree.command(name="nextround", description="Check upcoming CF, CC, or LC contests")
 async def nextround(interaction: discord.Interaction):
