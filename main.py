@@ -1518,7 +1518,7 @@ async def check_contests():
         else:
             time_str = "~5 hours"  # fallback
 
-embed.add_field(name="🕒 Starts In", value=time_str, inline=False)
+    embed.add_field(name="🕒 Starts In", value=time_str, inline=False)
 
         embed.set_footer(text="Good luck and don't forget to register!")
 
