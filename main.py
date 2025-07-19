@@ -697,10 +697,12 @@ async def verify(interaction: discord.Interaction, cfid: str):
             # Handle old role removal
             prev_user = users_collection.find_one({"discord_id": user_id})
             old_rank = prev_user.get("rank") if prev_user else None
-            if old_rank:
-                old_role = discord.utils.get(interaction.guild.roles, name=old_rank.title())
-                if old_role and old_role in interaction.user.roles:
-                    await interaction.user.remove_roles(old_role)
+            # Remove all Codeforces rank roles
+            for rank_name in role_colors:
+                role_obj = discord.utils.get(interaction.guild.roles, name=rank_name.title())
+                if role_obj and role_obj in interaction.user.roles:
+                    await interaction.user.remove_roles(role_obj)
+
 
             # Create or assign new rank role
             role_name = new_rank.title()
