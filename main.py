@@ -176,29 +176,57 @@ async def setreminderchannel(interaction: discord.Interaction,
     await interaction.response.send_message("✅ Reminder settings updated!", ephemeral=True)
 
 
-def record_duel_result(winner_cfid, loser_cfid):
-    users_collection.update_one({"cfid": winner_cfid}, {"$inc": {"duel_points": 1}})
+# def record_duel_result(winner_cfid, loser_cfid):
+#     users_collection.update_one({"cfid": winner_cfid}, {"$inc": {"duel_points": 1}})
 
-    # Log history with +1 for winner, 0 for loser
+#     # Log history with +1 for winner, 0 for loser
+#     timestamp = int(datetime.datetime.now(datetime.UTC).timestamp())
+#     users_collection.update_one(
+#         {"cfid": winner_cfid},
+#         {"$push": {
+#             "duel_history": {
+#                 "timestamp": timestamp,
+#                 "duel_points": 1
+#             }
+#         }}
+#     )
+#     users_collection.update_one(
+#         {"cfid": loser_cfid},
+#         {"$push": {
+#             "duel_history": {
+#                 "timestamp": timestamp,
+#                 "duel_points": 0  # no loss
+#             }
+#         }}
+#     )
+
+def record_duel_result(winner_cfid, loser_cfid, guild_id):
+    # Points logic
+    users_collection.update_one(
+        {"cfid": winner_cfid, "guild_id": guild_id},
+        {"$inc": {"duel_points": 2}},
+        upsert=True
+    )
+    users_collection.update_one(
+        {"cfid": loser_cfid, "guild_id": guild_id},
+        {"$inc": {"duel_points": -1}},
+        upsert=True
+    )
+
+    # History
     timestamp = int(datetime.datetime.now(datetime.UTC).timestamp())
-    users_collection.update_one(
-        {"cfid": winner_cfid},
-        {"$push": {
-            "duel_history": {
-                "timestamp": timestamp,
-                "duel_points": 1
-            }
-        }}
-    )
-    users_collection.update_one(
-        {"cfid": loser_cfid},
-        {"$push": {
-            "duel_history": {
-                "timestamp": timestamp,
-                "duel_points": 0  # no loss
-            }
-        }}
-    )
+    for cfid, won in [(winner_cfid, True), (loser_cfid, False)]:
+        users_collection.update_one(
+            {"cfid": cfid, "guild_id": guild_id},
+            {"$push": {
+                "duel_history": {
+                    "timestamp": timestamp,
+                    "duel_points": 2 if won else -1
+                }}
+            },
+            upsert=True
+        )
+
 
 
 
@@ -902,29 +930,62 @@ async def wait_for_ac(handle1, handle2, problem, timeout_minutes=15):
     return None
 
 #reset-duel
-@tree.command(name="resetduelall", description="Admin only: Reset **all users'** duel points to 0")
+# @tree.command(name="resetduelall", description="Admin only: Reset **all users'** duel points to 0")
+# @app_commands.checks.has_permissions(administrator=True)
+# async def resetduelall(interaction: discord.Interaction):
+#     result = users_collection.update_many({}, {
+#         "$set": {"duel_points": 0},
+#         "$unset": {"duel_history": ""}
+#     })
+#     await interaction.response.send_message(f"✅ Reset duel points for `{result.modified_count}` users.", ephemeral=True)
+@tree.command(name="resetduelall", description="Admin only: Reset duel points in this server")
 @app_commands.checks.has_permissions(administrator=True)
 async def resetduelall(interaction: discord.Interaction):
-    result = users_collection.update_many({}, {
-        "$set": {"duel_points": 0},
-        "$unset": {"duel_history": ""}
-    })
-    await interaction.response.send_message(f"✅ Reset duel points for `{result.modified_count}` users.", ephemeral=True)
+    result = users_collection.update_many(
+        {"guild_id": interaction.guild_id},
+        {
+            "$set": {"duel_points": 0},
+            "$unset": {"duel_history": ""}
+        }
+    )
+    await interaction.response.send_message(
+        f"✅ Reset duel points for `{result.modified_count}` users in this server.",
+        ephemeral=True
+    )
+
 
 #reset-user
-@tree.command(name="resetduel", description="Admin only: Reset a specific user's duel points")
-@app_commands.describe(user="The user whose duel points to reset")
+# @tree.command(name="resetduel", description="Admin only: Reset a specific user's duel points")
+# @app_commands.describe(user="The user whose duel points to reset")
+# @app_commands.checks.has_permissions(administrator=True)
+# async def resetduel(interaction: discord.Interaction, user: discord.User):
+#     result = users_collection.update_one(
+#         {"discord_id": str(user.id)},
+#         {"$set": {"duel_points": 0}, "$unset": {"duel_history": ""}}
+#     )
+
+#     if result.modified_count == 0:
+#         return await interaction.response.send_message("⚠️ That user doesn't exist in the database.", ephemeral=True)
+
+#     await interaction.response.send_message(f"✅ Reset duel points for `{user.name}`.", ephemeral=True)
+
+@tree.command(name="resetduel", description="Admin only: Reset a user's duel points")
+@app_commands.describe(user="The user to reset")
 @app_commands.checks.has_permissions(administrator=True)
 async def resetduel(interaction: discord.Interaction, user: discord.User):
     result = users_collection.update_one(
-        {"discord_id": str(user.id)},
+        {"discord_id": str(user.id), "guild_id": interaction.guild_id},
         {"$set": {"duel_points": 0}, "$unset": {"duel_history": ""}}
     )
 
     if result.modified_count == 0:
-        return await interaction.response.send_message("⚠️ That user doesn't exist in the database.", ephemeral=True)
+        return await interaction.response.send_message("⚠️ User not found in this server.", ephemeral=True)
 
-    await interaction.response.send_message(f"✅ Reset duel points for `{user.name}`.", ephemeral=True)
+    await interaction.response.send_message(
+        f"✅ Reset duel stats for `{user.name}` in this server.",
+        ephemeral=True
+    )
+
 
 # ------------------ Slash Command: /cfid ------------------
 @tree.command(name="cfid", description="Get a user's Codeforces handle")
@@ -971,23 +1032,23 @@ async def verified(interaction: discord.Interaction):
 
 #duel 
 # Helper: Record duel result in DB
-def record_duel_result(winner_cfid, loser_cfid):
-    # Update points
-    users_collection.update_one({"cfid": winner_cfid}, {"$inc": {"duel_points": 1}})
-    users_collection.update_one({"cfid": loser_cfid}, {"$inc": {"duel_points": -1}})
+# def record_duel_result(winner_cfid, loser_cfid):
+#     # Update points
+#     users_collection.update_one({"cfid": winner_cfid}, {"$inc": {"duel_points": 1}})
+#     users_collection.update_one({"cfid": loser_cfid}, {"$inc": {"duel_points": -1}})
 
-    # Log history
-    timestamp = int(datetime.datetime.now(datetime.UTC).timestamp())
-    for cfid, won in [(winner_cfid, True), (loser_cfid, False)]:
-        users_collection.update_one(
-            {"cfid": cfid},
-            {"$push": {
-                "duel_history": {
-                    "timestamp": timestamp,
-                    "duel_points": 1 if won else -1
-                }
-            }}
-        )
+#     # Log history
+#     timestamp = int(datetime.datetime.now(datetime.UTC).timestamp())
+#     for cfid, won in [(winner_cfid, True), (loser_cfid, False)]:
+#         users_collection.update_one(
+#             {"cfid": cfid},
+#             {"$push": {
+#                 "duel_history": {
+#                     "timestamp": timestamp,
+#                     "duel_points": 1 if won else -1
+#                 }
+#             }}
+#         )
 
 
 
@@ -1158,7 +1219,9 @@ async def duel(interaction: discord.Interaction, user: discord.User, min_rating:
                     winner = await wait_for_ac(h1, h2, self.problem)
                     if winner:
                         loser = h2 if winner == h1 else h1
-                        record_duel_result(winner, loser)
+                        # record_duel_result(winner, loser)
+                        record_duel_result(winner, loser, interaction.guild_id)
+
 
                         winner_user = interaction.user if winner == h1 else user
                         loser_user = user if winner == h1 else interaction.user
@@ -1195,20 +1258,51 @@ async def duel(interaction: discord.Interaction, user: discord.User, min_rating:
     await interaction.followup.send("📨 Duel request sent in a private thread.", ephemeral=True)
 
 
-@tree.command(name="duelleaderboard", description="📈See top duel performers")
+# @tree.command(name="duelleaderboard", description="📈See top duel performers")
+# async def duelleaderboard(interaction: discord.Interaction):
+#     users = users_collection.find({"duel_points": {"$exists": True}}).sort("duel_points", -1).limit(10)
+#     msg = "🏆 **Top Duel Performers** 🏆\n"
+#     for i, user in enumerate(users, 1):
+#         msg += f"**{i}.** `{user['cfid']}` → {user.get('duel_points', 0)} points\n"
+#     await interaction.response.send_message(msg)
+
+@tree.command(name="duelleaderboard", description="📈 See top duel performers of this server")
 async def duelleaderboard(interaction: discord.Interaction):
-    users = users_collection.find({"duel_points": {"$exists": True}}).sort("duel_points", -1).limit(10)
-    msg = "🏆 **Top Duel Performers** 🏆\n"
+    guild_id = interaction.guild_id
+
+    users = users_collection.find({
+        "guild_id": guild_id,
+        "duel_points": {"$exists": True}
+    }).sort("duel_points", -1).limit(10)
+
+    embed = discord.Embed(
+        title="🏆 Top Duelists",
+        description="Only showing users from **this server**",
+        color=discord.Color.blurple()
+    )
+
     for i, user in enumerate(users, 1):
-        msg += f"**{i}.** `{user['cfid']}` → {user.get('duel_points', 0)} points\n"
-    await interaction.response.send_message(msg)
+        cfid = user.get("cfid", "Unknown")
+        points = user.get("duel_points", 0)
+        embed.add_field(
+            name=f"#{i}  –  {cfid}",
+            value=f"🏅 Points: **{points}**",
+            inline=False
+        )
+
+    await interaction.response.send_message(embed=embed)
 
 
 
 # ------------------ My Duel Points ------------------
 @tree.command(name="myduelpoints", description="📊 Check your current duel points")
 async def myduelpoints(interaction: discord.Interaction):
-    user = users_collection.find_one({"discord_id": str(interaction.user.id)})
+    # user = users_collection.find_one({"discord_id": str(interaction.user.id)})
+    user = users_collection.find_one({
+        "discord_id": str(interaction.user.id),
+        "guild_id": interaction.guild_id
+    })
+
 
     if not user or "cfid" not in user:
         return await interaction.response.send_message("❌ You must be verified first.", ephemeral=True)
@@ -1221,21 +1315,21 @@ async def myduelpoints(interaction: discord.Interaction):
 
 
 # ------------------ Record Duel Result ------------------
-def record_duel_result(winner_cfid, loser_cfid):
-    users_collection.update_one({"cfid": winner_cfid}, {"$inc": {"duel_points": 2}})
-    users_collection.update_one({"cfid": loser_cfid}, {"$inc": {"duel_points": -1}})
+# def record_duel_result(winner_cfid, loser_cfid):
+#     users_collection.update_one({"cfid": winner_cfid}, {"$inc": {"duel_points": 2}})
+#     users_collection.update_one({"cfid": loser_cfid}, {"$inc": {"duel_points": -1}})
 
-    timestamp = int(datetime.datetime.now(datetime.UTC).timestamp())
-    for cfid, won in [(winner_cfid, True), (loser_cfid, False)]:
-        users_collection.update_one(
-            {"cfid": cfid},
-            {"$push": {
-                "duel_history": {
-                    "timestamp": timestamp,
-                    "duel_points": 2 if won else -1
-                }
-            }}
-        )
+#     timestamp = int(datetime.datetime.now(datetime.UTC).timestamp())
+#     for cfid, won in [(winner_cfid, True), (loser_cfid, False)]:
+#         users_collection.update_one(
+#             {"cfid": cfid},
+#             {"$push": {
+#                 "duel_history": {
+#                     "timestamp": timestamp,
+#                     "duel_points": 2 if won else -1
+#                 }
+#             }}
+#         )
 
 
 # ---------------- Generate Duel History Graph ------------------
@@ -1297,7 +1391,12 @@ def generate_duel_history_graph(history, username):
 
 @tree.command(name="myduelhistory", description="📉 View your duel point progression graph")
 async def myduelhistory(interaction: discord.Interaction):
-    user = users_collection.find_one({"discord_id": str(interaction.user.id)})
+    # user = users_collection.find_one({"discord_id": str(interaction.user.id)})
+    user = users_collection.find_one({
+        "discord_id": str(interaction.user.id),
+        "guild_id": interaction.guild_id
+    })
+
 
     if not user or "cfid" not in user:
         return await interaction.response.send_message("❌ You must be verified first.", ephemeral=True)
