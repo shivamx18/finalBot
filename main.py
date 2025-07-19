@@ -70,6 +70,18 @@ async def get_user_rating_and_rank(handle: str):
             rating = user.get("rating", 800)
             return rank, rating
 
+RANK_ORDER = [
+    "Newbie", "Pupil", "Specialist", "Expert",
+    "Candidate Master", "Master", "International Master",
+    "Grandmaster", "International Grandmaster", "Legendary Grandmaster"
+]
+
+def is_rank_up(new_rank: str, old_rank: str) -> bool:
+    try:
+        return RANK_ORDER.index(new_rank) > RANK_ORDER.index(old_rank)
+    except:
+        return False
+
 # ------------------ Utility: Guild Channel Check ------------------
 async def check_and_warn(interaction: discord.Interaction) -> bool:
     """Checks if the command is used in the allowed channel. Warns if not."""
@@ -526,82 +538,6 @@ async def setpotd2week(interaction: discord.Interaction,
 
 
 # ------------------ Slash Command: /verify ------------------
-# @tree.command(name="verify", description="Verify your Codeforces handle")
-# @app_commands.describe(cfid="Your Codeforces handle")
-# async def verify(interaction: discord.Interaction, cfid: str):
-#     """Creates a thread, verifies the user via CF API, and assigns rank role"""
-
-#     if not await check_and_warn(interaction):
-#         return
-
-#     # Defer the response early to avoid 3-second timeout
-#     await interaction.response.defer(ephemeral=True)
-
-#     verification_code = str(random.randint(1000, 9999))
-
-#     # Create a private thread
-#     thread = await interaction.channel.create_thread(
-#         name=f"verify-{interaction.user.name}",
-#         type=discord.ChannelType.private_thread
-#     )
-
-#     # Button view for confirmation
-#     class ConfirmView(discord.ui.View):
-#         @discord.ui.button(label="✅ Verify", style=discord.ButtonStyle.success)
-#         async def confirm(self, button_interaction: discord.Interaction, _):
-#             if button_interaction.user.id != interaction.user.id:
-#                 await button_interaction.response.send_message(
-#                     "❌ Only the user who initiated verification can confirm.",
-#                     ephemeral=True
-#                 )
-#                 return
-
-#             try:
-#                 rank, rating = await get_user_rating_and_rank(cfid)
-#             except Exception:
-#                 await button_interaction.response.send_message("❌ Invalid Codeforces handle.", ephemeral=True)
-#                 return
-
-#             # Create or find role based on CF rank
-#             role_name = rank.title()
-#             guild = interaction.guild
-#             role = discord.utils.get(guild.roles, name=role_name)
-#             if not role:
-#                 role = await guild.create_role(
-#                     name=role_name,
-#                     colour=discord.Colour(role_colors.get(rank, 0xCCCCCC))
-#                 )
-
-#             # Add role to user
-#             await interaction.user.add_roles(role)
-
-#             # Save to MongoDB
-#             users_collection.update_one(
-#                 {"discord_id": str(interaction.user.id)},
-#                 {"$set": {
-#                     "cfid": cfid,
-#                     "rank": rank,
-#                     "rating": rating,
-#                     "guild_id": interaction.guild_id
-#                 }},
-#                 upsert=True
-#             )
-
-#             await thread.send(f"✅ Verified as `{cfid}` with role **{role_name}**! 🎉")
-#             await thread.delete()
-
-#     # Instruction message inside thread
-#     await thread.send(
-#         f"{interaction.user.mention}, to verify:\n"
-#         f"1. Go to your [Codeforces settings](https://codeforces.com/settings)\n"
-#         f"2. Temporarily change your **first name** to: `{verification_code}`\n"
-#         f"3. Then click the ✅ button below to confirm.",
-#         view=ConfirmView()
-#     )
-
-#     # Confirmation in original interaction
-#     await interaction.followup.send("🔐 A private verification thread has been created for you.", ephemeral=True)
-
 #verify command
 @tree.command(name="verify", description="Verify your Codeforces handle")
 @app_commands.describe(cfid="Your Codeforces handle")
@@ -617,7 +553,7 @@ async def verify(interaction: discord.Interaction, cfid: str):
         type=discord.ChannelType.private_thread
     )
 
-    # View for Confirm Button
+    # Confirm button view
     class ConfirmView(discord.ui.View):
         @discord.ui.button(label="✅ Verify", style=discord.ButtonStyle.success)
         async def confirm(self, button_interaction: discord.Interaction, _):
@@ -628,7 +564,7 @@ async def verify(interaction: discord.Interaction, cfid: str):
                 )
                 return
 
-            # Fetch user details
+            # Fetch Codeforces data
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(f"https://codeforces.com/api/user.info?handles={cfid}") as resp:
@@ -644,27 +580,33 @@ async def verify(interaction: discord.Interaction, cfid: str):
                         new_rating = info.get("rating", 0)
 
             except Exception:
-                await button_interaction.response.send_message("❌ Verification failed. Make sure first name matches the code.", ephemeral=True)
+                await button_interaction.response.send_message(
+                    "❌ Verification failed. Make sure your Codeforces first name matches the code.",
+                    ephemeral=True
+                )
                 return
 
-            # Remove old rank roles
+            # Handle old role removal
             prev_user = users_collection.find_one({"discord_id": user_id})
-            if prev_user and "rank" in prev_user:
-                old_role = discord.utils.get(interaction.guild.roles, name=prev_user["rank"].title())
+            old_rank = prev_user.get("rank") if prev_user else None
+            if old_rank:
+                old_role = discord.utils.get(interaction.guild.roles, name=old_rank.title())
                 if old_role and old_role in interaction.user.roles:
                     await interaction.user.remove_roles(old_role)
 
-            # Assign new rank role
+            # Create or assign new rank role
             role_name = new_rank.title()
             role_color = role_colors.get(new_rank, 0xCCCCCC)
             role = discord.utils.get(interaction.guild.roles, name=role_name)
             if not role:
-                role = await interaction.guild.create_role(name=role_name, colour=discord.Colour(role_color))
-
+                role = await interaction.guild.create_role(
+                    name=role_name,
+                    colour=discord.Colour(role_color),
+                    reason="CF rank role created on verification"
+                )
             await interaction.user.add_roles(role)
 
-            # Check for Rank Celebration
-            old_rank = prev_user.get("rank") if prev_user else None
+            # Save to DB
             users_collection.update_one(
                 {"discord_id": user_id},
                 {"$set": {
@@ -676,37 +618,60 @@ async def verify(interaction: discord.Interaction, cfid: str):
                 upsert=True
             )
 
-            # Celebration Message if ranked up
-            if old_rank and new_rank != old_rank:
-                guild_data = guilds_collection.find_one({"guild_id": interaction.guild_id})
-                celebration_channel_id = guild_data.get("rank_celebration_channel") if guild_data else None
-                if celebration_channel_id:
-                    channel = interaction.guild.get_channel(celebration_channel_id)
-                    if channel:
-                        messages = [
-                            "🔥 Crushing the ladder!",
-                            "🎯 Another level up!",
-                            "📈 You’re unstoppable!",
-                            "🏆 That’s how it’s done!",
-                            "🚀 Zooming through the ranks!"
-                        ]
-                        msg = random.choice(messages)
-                        await channel.send(
-                            f"🎉 **{interaction.user.mention}** just ranked up to **{role_name}** on Codeforces!\n{msg}"
-                        )
+            # RANK-UP CELEBRATION
+            from random import choice
+            RANK_ORDER = [
+                "newbie", "pupil", "specialist", "expert",
+                "candidate master", "master", "international master",
+                "grandmaster", "international grandmaster", "legendary grandmaster"
+            ]
 
+            def is_rank_up(new_r, old_r):
+                try:
+                    return RANK_ORDER.index(new_r) > RANK_ORDER.index(old_r)
+                except:
+                    return False
+
+            if old_rank and is_rank_up(new_rank, old_rank):
+                guild_data = guilds_collection.find_one({"guild_id": interaction.guild_id})
+                channel_id = guild_data.get("rank_celebration_channel") if guild_data else None
+                if channel_id:
+                    channel = interaction.guild.get_channel(channel_id)
+                    if channel:
+                        quotes = [
+                            "Hard work beats talent when talent doesn’t work hard.",
+                            "You just ranked up — but you're only getting started. 🚀",
+                            "Your growth is showing. Keep pushing those limits! 💪",
+                            "Small steps each day lead to big achievements!",
+                            "Be proud, be humble, and aim higher!"
+                        ]
+                        quote = choice(quotes)
+                        embed = discord.Embed(
+                            title="🎉 Rank Up Alert!",
+                            description=f"{interaction.user.mention} just leveled up on Codeforces!",
+                            color=discord.Color.gold()
+                        )
+                        embed.add_field(name="📉 Previous Rank", value=old_rank.title(), inline=True)
+                        embed.add_field(name="📈 New Rank", value=new_rank.title(), inline=True)
+                        embed.add_field(name="💬 Motivation", value=f"*{quote}*", inline=False)
+                        embed.set_footer(text="👏 Congratulations!", icon_url=interaction.user.display_avatar.url)
+                        await channel.send(embed=embed)
+
+            # Final response
             await thread.send(f"✅ Verified as `{cfid}` with role **{role_name}**! 🎉")
             await thread.delete()
 
+    # Start verification instructions
     await thread.send(
         f"{interaction.user.mention}, to verify:\n"
         f"1. Go to your [Codeforces settings](https://codeforces.com/settings)\n"
-        f"2. Temporarily change your **first name** to: ```{verification_code}```\n"
+        f"2. Temporarily change your **first name** to:\n```{verification_code}```\n"
         f"3. Then click the ✅ button below to confirm.",
         view=ConfirmView()
     )
 
     await interaction.followup.send("🔐 A private verification thread has been created for you.", ephemeral=True)
+
 
 
 
@@ -1722,9 +1687,66 @@ scheduler = AsyncIOScheduler(timezone=tz_ist)
 
 @tasks.loop(time=datetime.time(hour=0, minute=0, tzinfo=tz_ist))
 async def post_potds():
-    day = datetime.datetime.now(tz_ist).strftime("%a").lower()[:3]  # mon, tue, ...
+    day = datetime.datetime.now(tz_ist).strftime("%a").lower()[:3]
+
     if day == "sun":
-        return  # No posting on Sundays
+        # 🔔 Reminder to set POTDs
+        for guild_doc in guilds_collection.find():
+            guild_id = guild_doc["guild_id"]
+            guild = bot.get_guild(guild_id)
+            if not guild:
+                continue
+
+            mod_channel_id = guild_doc.get("mod_channel")
+            if not mod_channel_id:
+                continue
+            channel = guild.get_channel(mod_channel_id)
+            if not channel:
+                continue
+
+            potd1_set = bool(guild_doc.get("potd1_problems", {}))
+            potd2_set = bool(guild_doc.get("potd2_problems", {}))
+            if not potd1_set or not potd2_set:
+                await channel.send("📌 Reminder: Use `/setpotd1week` and `/setpotd2week` to set the problems for next week.")
+
+        # 🏆 POTD Warrior Role Logic
+        for guild_doc in guilds_collection.find():
+            guild_id = guild_doc["guild_id"]
+            guild = bot.get_guild(guild_id)
+            if not guild:
+                continue
+
+            potd_warrior_role = discord.utils.get(guild.roles, name="POTD Warrior")
+            if not potd_warrior_role:
+                potd_warrior_role = await guild.create_role(name="POTD Warrior", colour=discord.Colour.gold())
+
+            last_week = datetime.datetime.now(tz_ist) - datetime.timedelta(weeks=1)
+            week_id = f"week_{last_week.year}-{last_week.isocalendar()[1]}"
+
+            for member in guild.members:
+                if member.bot:
+                    continue
+                user = users_collection.find_one({"discord_id": str(member.id)})
+                if not user:
+                    continue
+
+                claims = user.get("potd_claims", {}).get(week_id, {})
+                potd1 = set(claims.get("potd1", []))
+                potd2 = set(claims.get("potd2", []))
+                full_week = {"mon", "tue", "wed", "thu", "fri", "sat"}
+
+                # Remove if incomplete
+                if potd_warrior_role in member.roles and (potd1 != full_week or potd2 != full_week):
+                    await member.remove_roles(potd_warrior_role)
+
+            # Add if fully completed
+                elif potd1 == full_week and potd2 == full_week and potd_warrior_role not in member.roles:
+                    await member.add_roles(potd_warrior_role)
+
+    return  # ✅ Now we return AFTER the reward logic
+
+
+
 
     for guild_doc in guilds_collection.find():
         guild_id = guild_doc["guild_id"]
@@ -1765,6 +1787,100 @@ async def post_potds():
                     color=discord.Color.purple()
                 )
                 await channel.send(content=f"{role.mention}", embed=embed)
+
+@tree.command(name="todayspotd1", description="View today's POTD Level 1")
+async def todayspotd1(interaction: discord.Interaction):
+    day = datetime.datetime.now(tz_ist).strftime("%a").lower()[:3]
+    data = guilds_collection.find_one({"guild_id": interaction.guild_id})
+    problem = data.get("potd1_problems", {}).get(day)
+    if not problem:
+        return await interaction.response.send_message("❌ No problem set for today.", ephemeral=True)
+    await interaction.response.send_message(f"📘 **POTD Level 1 ({day.upper()})**:\n{problem}")
+
+@tree.command(name="todayspotd2", description="View today's POTD Level 2")
+async def todayspotd2(interaction: discord.Interaction):
+    day = datetime.datetime.now(tz_ist).strftime("%a").lower()[:3]
+    data = guilds_collection.find_one({"guild_id": interaction.guild_id})
+    problem = data.get("potd2_problems", {}).get(day)
+    if not problem:
+        return await interaction.response.send_message("❌ No problem set for today.", ephemeral=True)
+    await interaction.response.send_message(f"📙 **POTD Level 2 ({day.upper()})**:\n{problem}")
+
+import datetime
+
+def get_current_week_id():
+    today = datetime.datetime.now(tz_ist)
+    return f"week_{today.year}-{today.isocalendar()[1]}"
+
+@tree.command(name="claimpotd1", description="Mark today's POTD1 as completed")
+async def claimpotd1(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    today = datetime.datetime.now(tz_ist).strftime("%a").lower()[:3]
+    week_id = get_current_week_id()
+
+    users_collection.update_one(
+        {"discord_id": user_id},
+        {"$addToSet": {f"potd_claims.{week_id}.potd1": today}},
+        upsert=True
+    )
+    await interaction.response.send_message("✅ Marked today's POTD1 as completed!", ephemeral=True)
+
+@tree.command(name="claimpotd2", description="Mark today's POTD2 as completed")
+async def claimpotd2(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    today = datetime.datetime.now(tz_ist).strftime("%a").lower()[:3]
+    week_id = get_current_week_id()
+
+    users_collection.update_one(
+        {"discord_id": user_id},
+        {"$addToSet": {f"potd_claims.{week_id}.potd2": today}},
+        upsert=True
+    )
+    await interaction.response.send_message("✅ Marked today's POTD2 as completed!", ephemeral=True)
+
+@tree.command(name="mypotdstatus", description="Check which POTDs you've solved this week")
+async def mypotdstatus(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    week_id = get_current_week_id()
+    record = users_collection.find_one({"discord_id": user_id}) or {}
+
+    claims = record.get("potd_claims", {}).get(week_id, {})
+    potd1 = claims.get("potd1", [])
+    potd2 = claims.get("potd2", [])
+
+    msg = f"📘 **POTD1 Solved Days**: {', '.join(potd1) or 'None'}\n"
+    msg += f"📙 **POTD2 Solved Days**: {', '.join(potd2) or 'None'}"
+
+    await interaction.response.send_message(msg, ephemeral=True)
+@tree.command(name="potdstats", description="See which POTDs were most claimed last week")
+async def potdstats(interaction: discord.Interaction):
+    await interaction.response.defer()
+
+    last_week = datetime.datetime.now(tz_ist) - datetime.timedelta(weeks=1)
+    week_id = f"week_{last_week.year}-{last_week.isocalendar()[1]}"
+
+    counts = {
+        "potd1": {d: 0 for d in ["mon", "tue", "wed", "thu", "fri", "sat"]},
+        "potd2": {d: 0 for d in ["mon", "tue", "wed", "thu", "fri", "sat"]}
+    }
+
+    for user in users_collection.find({f"potd_claims.{week_id}": {"$exists": True}}):
+        claims = user["potd_claims"].get(week_id, {})
+        for d in claims.get("potd1", []):
+            counts["potd1"][d] += 1
+        for d in claims.get("potd2", []):
+            counts["potd2"][d] += 1
+
+    msg = f"📊 **POTD Stats for {week_id}**\n\n**Level 1:**\n"
+    for d in counts["potd1"]:
+        msg += f"🟦 {d.upper()}: {counts['potd1'][d]} users\n"
+
+    msg += "\n**Level 2:**\n"
+    for d in counts["potd2"]:
+        msg += f"🟪 {d.upper()}: {counts['potd2'][d]} users\n"
+
+    await interaction.followup.send(msg)
+
 
 import seaborn as sns
 import pandas as pd
@@ -1856,17 +1972,28 @@ async def cfheatmap(interaction: discord.Interaction):
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
+
     try:
         synced = await tree.sync()
         print(f"🌐 Synced {len(synced)} commands globally.")
     except Exception as e:
         print(f"❌ Failed to sync commands: {e}")
-    
+
     try:
         scheduler.start()
         print("🕒 Scheduler started successfully.")
     except Exception as e:
-        print(f"Scheduler error: {e}")
+        print(f"⚠️ Scheduler error: {e}")
+
+    try:
+        post_potds.start()
+        print("📘 POTD task started.")
+    except RuntimeError as e:
+        if "already running" in str(e).lower():
+            print("📘 POTD task already running.")
+        else:
+            print(f"❌ Failed to start POTD task: {e}")
+
 
 # ------------------ Run the Bot ------------------
 bot.run(TOKEN)
