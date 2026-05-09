@@ -1,12 +1,3 @@
-"""
-cogs/community.py — Community engagement commands.
-
-Commands
---------
-/thank          Publicly thank a server member with an embed
-/suggestions    Send feedback or bug reports to the mod team
-"""
-
 import datetime
 import random
 
@@ -16,8 +7,6 @@ from discord.ext import commands
 
 from config.database import guilds_collection, users_collection
 
-
-# ── Positivity quotes for /thank ─────────────────────────────────────────────
 THANK_QUOTES = [
     "Kindness is free, sprinkle that stuff everywhere.",
     "One kind word can change someone's entire day.",
@@ -33,8 +22,6 @@ class CommunityCog(commands.Cog, name="Community"):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    # ── /thank ────────────────────────────────────────────────────────────────
-
     @app_commands.command(
         name="thank",
         description="Publicly thank someone for helping you",
@@ -48,10 +35,8 @@ class CommunityCog(commands.Cog, name="Community"):
     ) -> None:
         if user.id == interaction.user.id:
             return await interaction.response.send_message(
-                "❌ You can't thank yourself!", ephemeral=True
+                "You can't thank yourself!", ephemeral=True
             )
-
-        # Increment thanks counter in DB
         users_collection.update_one(
             {"discord_id": str(user.id)},
             {"$inc": {"thanks": 1}},
@@ -71,8 +56,6 @@ class CommunityCog(commands.Cog, name="Community"):
 
         await interaction.response.send_message(embed=embed)
 
-    # ── /suggestions ─────────────────────────────────────────────────────────
-
     @app_commands.command(
         name="suggestions",
         description="Send feedback or report bugs to the mod team",
@@ -86,13 +69,13 @@ class CommunityCog(commands.Cog, name="Community"):
 
         if not mod_channel_id:
             return await interaction.response.send_message(
-                "❌ No mod channel is configured on this server.", ephemeral=True
+                "No mod channel is configured on this server.", ephemeral=True
             )
 
         mod_channel = interaction.guild.get_channel(mod_channel_id)
         if not mod_channel:
             return await interaction.response.send_message(
-                "❌ The configured mod channel was not found.", ephemeral=True
+                "The configured mod channel was not found.", ephemeral=True
             )
 
         embed = discord.Embed(
@@ -108,7 +91,7 @@ class CommunityCog(commands.Cog, name="Community"):
 
         await mod_channel.send(embed=embed)
         await interaction.response.send_message(
-            "✅ Your suggestion has been sent to the moderators!", ephemeral=True
+            "Your suggestion has been sent to the moderators!", ephemeral=True
         )
 
 
