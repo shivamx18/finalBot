@@ -34,7 +34,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     print(f"[ERROR] Command error: {error}")
     traceback.print_exc()
     try:
-        msg = "❌ This command is for **admins only**." if isinstance(error, app_commands.MissingPermissions) else f"⚠️ Error: `{error}`"
+        msg = "This command is for **admins only**." if isinstance(error, app_commands.MissingPermissions) else f"Error: `{error}`"
         if interaction.response.is_done():
             await interaction.followup.send(msg, ephemeral=True)
         else:
@@ -45,12 +45,12 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
+    print(f"Logged in as {bot.user}")
     try:
         synced = await bot.tree.sync()
-        print(f"🌐 Synced {len(synced)} commands globally.")
+        print(f"Synced {len(synced)} commands globally.")
     except Exception as e:
-        print(f"❌ Sync failed: {e}")
+        print(f"Sync failed: {e}")
     await start_scheduler(bot)
 
 
@@ -62,10 +62,10 @@ async def main():
         for cog in COGS:
             try:
                 await bot.load_extension(cog)
-                print(f"✅ Loaded: {cog}")
+                print(f"Loaded: {cog}")
             except Exception as e:
-                print(f"❌ Failed to load {cog}:")
-                traceback.print_exc()  # prints the FULL error so you can see exactly what's wrong
+                print(f"Failed to load {cog}:")
+                traceback.print_exc()
 
         await bot.start(TOKEN)
 
