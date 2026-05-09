@@ -1,7 +1,3 @@
-"""
-cogs/admin.py — Guild setup & configuration commands (admin-only).
-"""
-
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -23,7 +19,7 @@ class AdminCog(commands.Cog, name="Admin"):
         category = interaction.channel.category
         if not category:
             return await interaction.response.send_message(
-                "❌ Run this command in a channel **inside a category**.", ephemeral=True
+                "Run this command in a channel **inside a category**.", ephemeral=True
             )
         guilds_collection.update_one(
             {"guild_id": interaction.guild_id},
@@ -31,7 +27,7 @@ class AdminCog(commands.Cog, name="Admin"):
             upsert=True,
         )
         await interaction.response.send_message(
-            f"✅ Bot commands restricted to **{category.name}** category.", ephemeral=True
+            f"Bot commands restricted to **{category.name}** category.", ephemeral=True
         )
 
     @app_commands.command(
@@ -59,7 +55,7 @@ class AdminCog(commands.Cog, name="Admin"):
         category = channel.category
         if not category:
             return await interaction.response.send_message(
-                "❌ Choose a channel that is inside a category.", ephemeral=True
+                "Choose a channel that is inside a category.", ephemeral=True
             )
         guilds_collection.update_one(
             {"guild_id": interaction.guild_id},
@@ -67,7 +63,7 @@ class AdminCog(commands.Cog, name="Admin"):
             upsert=True,
         )
         await interaction.response.send_message(
-            f"✅ Duel category set to **{category.name}**.", ephemeral=True
+            f"Duel category set to **{category.name}**.", ephemeral=True
         )
 
     @app_commands.command(
@@ -105,7 +101,7 @@ class AdminCog(commands.Cog, name="Admin"):
             }},
             upsert=True,
         )
-        await interaction.response.send_message("✅ Reminder settings updated!", ephemeral=True)
+        await interaction.response.send_message("Reminder settings updated!", ephemeral=True)
 
     @app_commands.command(
         name="setmodchannel",
@@ -122,7 +118,7 @@ class AdminCog(commands.Cog, name="Admin"):
             upsert=True,
         )
         await interaction.response.send_message(
-            f"✅ Mod channel set to {channel.mention}", ephemeral=True
+            f"Mod channel set to {channel.mention}", ephemeral=True
         )
 
     @app_commands.command(
@@ -135,7 +131,7 @@ class AdminCog(commands.Cog, name="Admin"):
         platform = platform.lower()
         if platform not in ("cf", "cc", "lc"):
             return await interaction.response.send_message(
-                "❌ Valid platforms: `cf`, `cc`, `lc`", ephemeral=True
+                "Valid platforms: `cf`, `cc`, `lc`", ephemeral=True
             )
         field_map = {"cf": "reminder_enable_cf", "cc": "reminder_enable_cc", "lc": "reminder_enable_lc"}
         guilds_collection.update_one(
@@ -144,7 +140,7 @@ class AdminCog(commands.Cog, name="Admin"):
             upsert=True,
         )
         await interaction.response.send_message(
-            f"🔔 Reminders for **{platform.upper()}** enabled.", ephemeral=True
+            f"Reminders for **{platform.upper()}** enabled.", ephemeral=True
         )
 
     @app_commands.command(
@@ -157,7 +153,7 @@ class AdminCog(commands.Cog, name="Admin"):
         platform = platform.lower()
         if platform not in ("cf", "cc", "lc"):
             return await interaction.response.send_message(
-                "❌ Valid platforms: `cf`, `cc`, `lc`", ephemeral=True
+                "Valid platforms: `cf`, `cc`, `lc`", ephemeral=True
             )
         field_map = {"cf": "reminder_enable_cf", "cc": "reminder_enable_cc", "lc": "reminder_enable_lc"}
         guilds_collection.update_one(
@@ -166,11 +162,8 @@ class AdminCog(commands.Cog, name="Admin"):
             upsert=True,
         )
         await interaction.response.send_message(
-            f"🔕 Reminders for **{platform.upper()}** disabled.", ephemeral=True
+            f"Reminders for **{platform.upper()}** disabled.", ephemeral=True
         )
-
-    # BUG FIX: on_app_command_error must be registered on bot.tree, not as a Cog listener.
-    # Moved it to main.py's on_ready via bot.tree.error instead.
 
 
 async def setup(bot: commands.Bot) -> None:
