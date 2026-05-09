@@ -1,11 +1,3 @@
-"""
-cogs/broadcast.py — Broadcast announcements to all guild mod channels.
-
-Commands
---------
-/announce   Admin only: send a message to every guild's mod channel
-"""
-
 import datetime
 
 import discord
@@ -66,7 +58,7 @@ class BroadcastCog(commands.Cog, name="Broadcast"):
                 failed += 1
 
         await interaction.followup.send(
-            f"✅ Announcement sent to `{sent}` guilds. Failed: `{failed}`.",
+            f"Announcement sent to `{sent}` guilds. Failed: `{failed}`.",
             ephemeral=True,
         )
 
